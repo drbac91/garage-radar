@@ -83,6 +83,10 @@ button{cursor:pointer}
 .field input,.field select,.field textarea{width:100%;min-width:0;background:var(--field);border:1px solid var(--line);border-radius:.75rem;padding:12px;font-size:16px;color-scheme:dark}
 .field input:focus,.field select:focus{border-color:var(--blue);outline:none;box-shadow:0 0 0 3px rgba(59,130,255,.25)}
 .field input.big{font-size:20px;font-weight:800}
+/* iOS Safari da a los input[type=date] un ancho mínimo propio que invade la columna vecina */
+.grid-2>*{min-width:0}
+.field input[type=date]{-webkit-appearance:none;appearance:none;display:block;min-width:0;max-width:100%;min-height:46px;text-align:left}
+.field input[type=date]::-webkit-date-and-time-value{text-align:left;min-width:0}
 .form-error{margin:0;color:#ff8f9a;font-size:13px}
 .form-warn{margin:0;color:var(--yellow);font-size:13px}
 .actions{display:flex;gap:10px;flex-wrap:wrap}
@@ -195,7 +199,7 @@ button.alert{cursor:pointer}
 
 /* Modal */
 .modal-back{position:fixed;inset:0;z-index:60;background:rgba(5,4,10,.72);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);display:flex;align-items:flex-end;justify-content:center}
-.sheet{width:100%;max-width:520px;max-height:92vh;overflow:auto;background:var(--card);border:1px solid var(--line);border-radius:1.25rem 1.25rem 0 0;padding:18px 18px calc(18px + env(safe-area-inset-bottom));animation:up .22s ease-out}
+.sheet{width:100%;max-width:520px;max-height:92vh;max-height:92dvh;overflow:auto;overscroll-behavior:contain;background:var(--card);border:1px solid var(--line);border-radius:1.25rem 1.25rem 0 0;padding:18px 18px calc(18px + env(safe-area-inset-bottom));animation:up .22s ease-out}
 .sheet.wide{max-width:640px}
 @keyframes up{from{transform:translateY(24px);opacity:0}}
 @media(min-width:640px){.modal-back{align-items:center}.sheet{border-radius:1.25rem}}
@@ -1189,6 +1193,7 @@ function openModal({ title, body, wide = false, onClose }) {
     <div class="sheet-head"><h2 class="sheet-title" id="m-title">${esc(title)}</h2><button class="icon-btn" type="button" data-modal-close aria-label="Cerrar">${icon('x', 20)}</button></div>
     <div class="sheet-body">${body}</div></div>`;
   $('#modal-root').appendChild(back);
+  document.documentElement.style.overflow = 'hidden';   // bloquea el scroll del fondo mientras hay un modal
   hydrateIcons(back);
   modal = { el: back, prev, onClose };
   back.addEventListener('mousedown', e => { if (e.target === back) closeModal(); });
@@ -1201,6 +1206,7 @@ function closeModal(silent = false) {
   if (!modal) return;
   const m = modal; modal = null;
   m.el.remove();
+  document.documentElement.style.overflow = '';
   if (m.prev && m.prev.focus) try { m.prev.focus(); } catch (e) { /* noop */ }
   if (!silent && m.onClose) m.onClose();
 }
