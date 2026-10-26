@@ -10,7 +10,7 @@
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
 /* ==========================================================================
-   Garage Radar · tokens "Midnight Control Room".
+   Garage Radar · tokens del tema oscuro.
    Estos estilos propios cubren todo lo crítico: si el CDN de Tailwind no carga
    (sin conexión) la app sigue siendo legible y usable.
    ========================================================================== */
@@ -105,7 +105,7 @@ button{cursor:pointer}
 .switch[aria-checked=true] .track{background:var(--green)}
 .switch[aria-checked=true] .track::after{transform:translateX(18px)}
 
-/* Radar de alertas */
+/* Vencimientos */
 .alerts{display:grid;gap:10px}
 .alert{--c:var(--muted);--cb:rgba(151,148,173,.14);display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px;align-items:center;
   padding:12px;border-radius:.9rem;background:var(--card2);border-left:4px solid var(--c);width:100%;text-align:left;border-top:0;border-right:0;border-bottom:0;color:inherit}
@@ -121,7 +121,7 @@ button{cursor:pointer}
 .badge{display:inline-block;margin-top:5px;font-size:10px;font-weight:800;letter-spacing:.1em;padding:3px 8px;border-radius:99px;background:var(--cb);color:var(--c);white-space:nowrap}
 button.alert{cursor:pointer}
 
-/* Passport */
+/* Métricas */
 .hero{padding:6px 0 14px}
 .hero-label{font-size:11px;font-weight:800;letter-spacing:.14em;color:var(--muted);text-transform:uppercase}
 .hero-val{font-size:clamp(42px,12vw,60px);font-weight:900;line-height:1.02;letter-spacing:-.03em}
@@ -281,24 +281,24 @@ details.more-info summary{cursor:pointer;color:var(--blue);font-weight:700;font-
   <div id="global-error" class="banner" role="alert" hidden></div>
 
   <div class="layout">
-    <!-- Radar de alertas -->
+    <!-- Vencimientos -->
     <section class="card a-radar rounded-2xl" aria-labelledby="t-radar">
       <div class="card-head">
-        <h2 class="card-title" id="t-radar"><span data-icon="radar"></span>Radar de alertas</h2>
+        <h2 class="card-title" id="t-radar"><span data-icon="radar"></span>Vencimientos</h2>
         <button class="btn btn-ghost btn-sm" type="button" data-action="open-settings"><span data-icon="gear" data-size="16"></span>Configurar</button>
       </div>
       <div id="radar-list" class="alerts"></div>
     </section>
 
-    <!-- Passport -->
+    <!-- Métricas -->
     <section class="card a-passport rounded-2xl" aria-labelledby="t-passport">
-      <div class="card-head"><h2 class="card-title" id="t-passport"><span data-icon="passport"></span>Passport</h2></div>
+      <div class="card-head"><h2 class="card-title" id="t-passport"><span data-icon="passport"></span>Métricas</h2></div>
       <div id="passport"></div>
     </section>
 
-    <!-- Flight Log -->
+    <!-- Cargas de combustible -->
     <section class="card a-fuel rounded-2xl" aria-labelledby="t-fuel">
-      <div class="card-head"><h2 class="card-title" id="t-fuel"><span data-icon="fuel"></span>Flight Log</h2></div>
+      <div class="card-head"><h2 class="card-title" id="t-fuel"><span data-icon="fuel"></span>Cargas de combustible</h2></div>
       <div class="pill" id="fuel-pill" role="group" aria-label="Tipo de combustible">
         <button type="button" data-action="set-fuel" data-fuel="NAFTA" aria-pressed="false">NAFTA</button>
         <button type="button" data-action="set-fuel" data-fuel="GNC" aria-pressed="true">GNC</button>
@@ -330,10 +330,10 @@ details.more-info summary{cursor:pointer;color:var(--blue);font-weight:700;font-
       <div id="fl-history" style="margin-top:14px"></div>
     </section>
 
-    <!-- Log de gastos -->
+    <!-- Gastos -->
     <section class="card a-exp rounded-2xl" aria-labelledby="t-exp">
       <div class="card-head">
-        <h2 class="card-title" id="t-exp"><span data-icon="wrench"></span>Log de gastos</h2>
+        <h2 class="card-title" id="t-exp"><span data-icon="wrench"></span>Gastos</h2>
         <button class="btn btn-primary btn-sm" type="button" data-action="new-expense"><span data-icon="plus" data-size="16"></span>Nuevo gasto</button>
       </div>
       <div id="gx-chips" class="chips" role="group" aria-label="Filtrar por categoría"></div>
@@ -342,7 +342,7 @@ details.more-info summary{cursor:pointer;color:var(--blue);font-weight:700;font-
 
     <!-- Tablero ampliado -->
     <section class="card a-charts rounded-2xl" aria-labelledby="t-charts">
-      <div class="card-head"><h2 class="card-title" id="t-charts"><span data-icon="chart"></span>Tablero</h2></div>
+      <div class="card-head"><h2 class="card-title" id="t-charts"><span data-icon="chart"></span>Evolución y desglose</h2></div>
       <div id="charts" class="charts"></div>
     </section>
   </div>
@@ -721,7 +721,7 @@ function derive() {
   return { kmNow, kmMin, span, segs, segById, eff, mix, fuelTotal, otherTotal, cpk, catTotals, months };
 }
 
-// Estado de cada alerta del radar, ordenadas de la más crítica a la menos crítica.
+// Estado de cada vencimiento, ordenadas de la más crítica a la menos crítica.
 function computeAlerts(D) {
   const s = state.settings || {};
   const venc = s.vencimientos || {};
@@ -989,11 +989,11 @@ function renderHeader(D) {
 function renderRadar(D) {
   const box = $('#radar-list');
   if (!allLoaded()) { box.innerHTML = skeleton(4); return; }
-  const unitStr = { red: 'VENCIDA', yellow: 'PRÓXIMA', green: 'EN HORA', none: 'SIN CONFIGURAR' };
+  const unitStr = { red: 'VENCIDA', yellow: 'PRÓXIMA', green: 'AL DÍA', none: 'SIN CONFIGURAR' };
   box.innerHTML = computeAlerts(D).map(a => {
     let sub = esc(a.sub), big = '—', badge = unitStr.none;
     if (a.st !== 'none') {
-      badge = a.kind === 'km' ? { red: 'DEMORADO', yellow: 'PRÓXIMO', green: 'EN HORA' }[a.st] : unitStr[a.st];
+      badge = a.kind === 'km' ? { red: 'ATRASADO', yellow: 'PRÓXIMO', green: 'AL DÍA' }[a.st] : unitStr[a.st];
       if (a.kind === 'date') {
         const when = a.days > 0 ? `en ${nf(a.days)} días` : a.days === 0 ? 'vence hoy' : `venció hace ${nf(-a.days)} días`;
         sub = `Vence ${fmtDate(a.iso)} · ${when}`;
@@ -1225,7 +1225,7 @@ function confirmDialog({ title, message, confirmText = 'Eliminar', danger = true
   });
 }
 
-/* ---- Flight Log: formulario de carga ---- */
+/* ---- Cargas: formulario de carga ---- */
 const flErr = (msg) => { const e = $('#fl-error'); e.textContent = msg || ''; e.hidden = !msg; };
 function updateUnitPrice() {
   const v = parseNum($('#fl-vol').value), c = parseNum($('#fl-costo').value);
