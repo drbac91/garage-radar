@@ -35,13 +35,24 @@ button{cursor:pointer}
 
 /* Layout */
 .wrap{max-width:560px;margin:0 auto;padding:14px 16px calc(40px + env(safe-area-inset-bottom))}
-.layout{display:grid;gap:16px;grid-template-columns:minmax(0,1fr);
-  grid-template-areas:"radar" "passport" "fuel" "exp" "charts"}
-.a-radar{grid-area:radar}.a-passport{grid-area:passport}.a-fuel{grid-area:fuel}.a-exp{grid-area:exp}.a-charts{grid-area:charts}
-@media(min-width:1024px){
-  .wrap{max-width:1180px}
-  .layout{grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:start;
-    grid-template-areas:"radar passport" "charts charts" "fuel exp"}
+.wrap{padding-bottom:calc(92px + env(safe-area-inset-bottom))}
+.view{display:grid;gap:16px;grid-template-columns:minmax(0,1fr);align-items:start}
+@media(min-width:768px){.wrap{max-width:900px;padding-bottom:calc(40px + env(safe-area-inset-bottom))}}
+@media(min-width:1024px){.wrap{max-width:1180px}.view.cols2{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
+
+/* Pestañas: barra inferior fija en móvil, barra superior en escritorio */
+.tabbar{position:fixed;left:0;right:0;bottom:0;z-index:40;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));
+  background:rgba(20,19,31,.94);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-top:1px solid var(--line);
+  padding:6px 4px calc(6px + env(safe-area-inset-bottom))}
+.tabbar a{display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 0;border-radius:.7rem;color:var(--muted);text-decoration:none;font-size:9.5px;font-weight:700;letter-spacing:-.01em;min-width:0}
+.tabbar a span:not(.ico):not([data-icon]){max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tabbar .lbl-s{display:none}
+@media(max-width:420px){.tabbar .lbl-l{display:none}.tabbar .lbl-s{display:block}}
+.tabbar a[aria-current=page]{color:#fff;background:rgba(59,130,255,.18)}
+.tabbar a[aria-current=page] .ico{color:var(--blue)}
+@media(min-width:768px){
+  .tabbar{position:static;display:flex;gap:6px;margin-bottom:16px;padding:6px;border:1px solid var(--line);border-radius:1rem;background:var(--card)}
+  .tabbar a{flex:1;flex-direction:row;justify-content:center;gap:8px;font-size:13.5px;letter-spacing:0;padding:10px 8px}
 }
 .card{background:var(--card);border:1px solid var(--line);border-radius:1rem;padding:16px;box-shadow:0 10px 30px rgba(0,0,0,.28)}
 .card-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px}
@@ -73,7 +84,7 @@ button{cursor:pointer}
 .btn-primary{background:var(--blue);color:#fff}.btn-primary:hover{background:#2f72ec}
 .btn-ghost{background:transparent;border-color:var(--line);color:var(--text)}.btn-ghost:hover{background:rgba(255,255,255,.05)}
 .btn-danger{background:var(--red);color:#fff}
-.btn-sm{padding:7px 12px;font-size:13px;border-radius:.65rem}
+.btn-sm{padding:7px 12px;font-size:13px;border-radius:.65rem;white-space:nowrap}
 .btn-block{width:100%}
 .icon-btn{display:inline-grid;place-items:center;width:34px;height:34px;border-radius:.6rem;border:0;background:transparent;color:var(--muted)}
 .icon-btn:hover{background:rgba(255,255,255,.07);color:var(--text)}
@@ -121,6 +132,11 @@ button{cursor:pointer}
 .alert-big small{font-size:12px;font-weight:700;color:var(--muted);margin-left:3px}
 .badge{display:inline-block;margin-top:5px;font-size:10px;font-weight:800;letter-spacing:.1em;padding:3px 8px;border-radius:99px;background:var(--cb);color:var(--c);white-space:nowrap}
 button.alert{cursor:pointer}
+@media(max-width:480px){
+  .alert{grid-template-columns:auto minmax(0,1fr)}
+  .alert-right{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:10px;text-align:left}
+  .alert-right .badge{margin-top:0}
+}
 
 /* Métricas */
 .hero{padding:6px 0 14px}
@@ -130,7 +146,7 @@ button.alert{cursor:pointer}
 .hero-sub{font-size:13px;color:var(--muted)}
 .tile{background:var(--card2);border-radius:.9rem;padding:12px;min-width:0}
 .tile-label{font-size:10.5px;font-weight:800;letter-spacing:.1em;color:var(--muted);text-transform:uppercase}
-.tile-val{font-size:24px;font-weight:900;letter-spacing:-.02em;line-height:1.15;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile-val{font-size:clamp(19px,5.8vw,24px);font-weight:900;letter-spacing:-.02em;line-height:1.15;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tile-val small{font-size:12px;font-weight:700;color:var(--muted);margin-left:3px}
 .tile-sub{font-size:12px;color:var(--muted)}
 .mix{margin-top:16px}
@@ -143,7 +159,7 @@ button.alert{cursor:pointer}
 .list{list-style:none;margin:0;padding:0;display:grid;gap:8px}
 .item{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;background:var(--card2);border-radius:.85rem;padding:10px 10px 10px 12px}
 .item-ico{width:36px;height:36px;border-radius:11px;display:grid;place-items:center;background:rgba(255,255,255,.06)}
-.item-title{font-weight:800;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.item-title{font-weight:800;line-height:1.2;overflow-wrap:anywhere}
 .item-sub{font-size:12.5px;color:var(--muted);margin-top:2px;display:flex;flex-wrap:wrap;gap:2px 8px;align-items:center}
 .item-right{text-align:right}
 .item-amt{font-weight:900;font-size:16px}
@@ -221,9 +237,10 @@ details.more-info summary{cursor:pointer;color:var(--blue);font-weight:700;font-
 .footer{margin-top:28px;padding-top:18px;border-top:1px solid var(--line);display:flex;flex-wrap:wrap;gap:10px;justify-content:center}
 .footer .btn{font-size:13px;padding:8px 12px;color:var(--muted)}
 .foot-note{text-align:center;font-size:11.5px;color:var(--muted);margin-top:12px}
-#toasts{position:fixed;left:0;right:0;bottom:calc(16px + env(safe-area-inset-bottom));z-index:80;display:grid;gap:8px;justify-items:center;padding:0 16px;pointer-events:none}
+#toasts{position:fixed;left:0;right:0;bottom:calc(80px + env(safe-area-inset-bottom));z-index:80;display:grid;gap:8px;justify-items:center;padding:0 16px;pointer-events:none}
 .toast{pointer-events:auto;background:#262536;border:1px solid var(--line);border-left:4px solid var(--blue);padding:11px 14px;border-radius:.8rem;max-width:460px;font-size:14px;box-shadow:0 10px 30px rgba(0,0,0,.5)}
 .toast.err{border-left-color:var(--red)}.toast.ok{border-left-color:var(--green)}
+@media(min-width:768px){#toasts{bottom:calc(16px + env(safe-area-inset-bottom))}}
 
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 </style>
@@ -281,29 +298,44 @@ details.more-info summary{cursor:pointer;color:var(--blue);font-weight:700;font-
   <div class="sync"><span class="dot" id="hdr-dot"></span><span id="hdr-sync">Conectando…</span></div>
   <div id="global-error" class="banner" role="alert" hidden></div>
 
-  <div class="layout">
-    <!-- Vencimientos -->
-    <section class="card a-radar rounded-2xl" aria-labelledby="t-radar">
-      <div class="card-head">
-        <h2 class="card-title" id="t-radar"><span data-icon="radar"></span>Vencimientos</h2>
-        <button class="btn btn-ghost btn-sm" type="button" data-action="open-settings"><span data-icon="gear" data-size="16"></span>Configurar</button>
-      </div>
-      <div id="radar-list" class="alerts"></div>
-    </section>
+  <nav class="tabbar" id="tabbar" aria-label="Secciones">
+    <a href="#/resumen" data-tab="resumen"><span data-icon="home" data-size="22"></span><span>Resumen</span></a>
+    <a href="#/cargas" data-tab="cargas"><span data-icon="fuel" data-size="22"></span><span>Cargas</span></a>
+    <a href="#/gastos" data-tab="gastos"><span data-icon="wrench" data-size="22"></span><span>Gastos</span></a>
+    <a href="#/metricas" data-tab="metricas"><span data-icon="chart" data-size="22"></span><span>Métricas</span></a>
+    <a href="#/vencimientos" data-tab="vencimientos" aria-label="Vencimientos"><span data-icon="calendar" data-size="22"></span><span class="lbl-l">Vencimientos</span><span class="lbl-s" aria-hidden="true">Vencim.</span></a>
+    <a href="#/ajustes" data-tab="ajustes"><span data-icon="gear" data-size="22"></span><span>Ajustes</span></a>
+  </nav>
 
-    <!-- Métricas -->
-    <section class="card a-passport rounded-2xl" aria-labelledby="t-passport">
-      <div class="card-head"><h2 class="card-title" id="t-passport"><span data-icon="passport"></span>Métricas</h2></div>
-      <div id="passport"></div>
-    </section>
+  <main id="views">
+    <!-- Resumen -->
+    <div class="view cols2" data-view="resumen" hidden>
+      <section class="card rounded-2xl" aria-labelledby="t-resumen">
+        <div class="card-head"><h2 class="card-title" id="t-resumen"><span data-icon="home"></span>Resumen</h2></div>
+        <div id="resumen"></div>
+      </section>
+      <section class="card rounded-2xl" aria-labelledby="t-next">
+        <div class="card-head">
+          <h2 class="card-title" id="t-next"><span data-icon="calendar"></span>Próximos vencimientos</h2>
+          <a class="btn btn-ghost btn-sm" href="#/vencimientos">Ver todos</a>
+        </div>
+        <div id="next-list" class="alerts"></div>
+      </section>
+    </div>
 
+    <!-- Cargas -->
+    <div class="view" data-view="cargas" hidden>
     <!-- Cargas de combustible -->
-    <section class="card a-fuel rounded-2xl" aria-labelledby="t-fuel">
-      <div class="card-head"><h2 class="card-title" id="t-fuel"><span data-icon="fuel"></span>Cargas de combustible</h2></div>
+    <section class="card rounded-2xl" aria-labelledby="t-fuel">
+      <div class="card-head">
+        <h2 class="card-title" id="t-fuel"><span data-icon="fuel"></span>Cargas de combustible</h2>
+        <button class="btn btn-primary btn-sm" type="button" data-action="new-refuel"><span data-icon="plus" data-size="16"></span>Nueva carga</button>
+      </div>
       <div class="pill" id="fuel-pill" role="group" aria-label="Tipo de combustible">
         <button type="button" data-action="set-fuel" data-fuel="NAFTA" aria-pressed="false">NAFTA</button>
         <button type="button" data-action="set-fuel" data-fuel="GNC" aria-pressed="true">GNC</button>
       </div>
+      <div id="fl-formwrap" hidden>
       <form id="fl-form" class="stack" novalidate autocomplete="off">
         <div class="grid-2">
           <div class="field"><label for="fl-fecha">Fecha</label><input id="fl-fecha" type="date" required></div>
@@ -325,15 +357,20 @@ details.more-info summary{cursor:pointer;color:var(--blue);font-weight:700;font-
         <p id="fl-error" class="form-error" role="alert" hidden></p>
         <div class="actions">
           <button class="btn btn-primary" type="submit" id="fl-submit"><span data-icon="plus" data-size="18"></span><span id="fl-submit-txt">Registrar carga</span></button>
-          <button class="btn btn-ghost" type="button" id="fl-cancel" data-action="refuel-cancel" hidden>Cancelar</button>
+          <button class="btn btn-ghost" type="button" id="fl-cancel" data-action="refuel-cancel">Cancelar</button>
         </div>
       </form>
+      </div>
       <div id="fl-stats" class="grid-2" style="margin-top:18px"></div>
       <div id="fl-history" style="margin-top:14px"></div>
     </section>
 
+    </div>
+
     <!-- Gastos -->
-    <section class="card a-exp rounded-2xl" aria-labelledby="t-exp">
+    <div class="view" data-view="gastos" hidden>
+    <!-- Gastos -->
+    <section class="card rounded-2xl" aria-labelledby="t-exp">
       <div class="card-head">
         <h2 class="card-title" id="t-exp"><span data-icon="wrench"></span>Gastos</h2>
         <button class="btn btn-primary btn-sm" type="button" data-action="new-expense"><span data-icon="plus" data-size="16"></span>Nuevo gasto</button>
@@ -342,20 +379,47 @@ details.more-info summary{cursor:pointer;color:var(--blue);font-weight:700;font-
       <div id="gx-history"></div>
     </section>
 
-    <!-- Tablero ampliado -->
-    <section class="card a-charts rounded-2xl" aria-labelledby="t-charts">
+    </div>
+
+    <!-- Métricas -->
+    <div class="view" data-view="metricas" hidden>
+      <section class="card rounded-2xl" aria-labelledby="t-passport">
+        <div class="card-head"><h2 class="card-title" id="t-passport"><span data-icon="passport"></span>Métricas</h2></div>
+        <div id="passport"></div>
+      </section>
+    <!-- Evolución y desglose -->
+    <section class="card rounded-2xl" aria-labelledby="t-charts">
       <div class="card-head"><h2 class="card-title" id="t-charts"><span data-icon="chart"></span>Evolución y desglose</h2></div>
       <div id="charts" class="charts"></div>
     </section>
-  </div>
+    </div>
 
-  <footer class="footer">
-    <button class="btn btn-ghost" type="button" data-action="export"><span data-icon="download" data-size="16"></span>Exportar Copia de Seguridad (JSON)</button>
-    <button class="btn btn-ghost" type="button" data-action="import"><span data-icon="upload" data-size="16"></span>Importar Datos</button>
-    <button class="btn btn-ghost" type="button" data-action="logout" id="btn-logout"><span data-icon="logout" data-size="16"></span>Cerrar sesión</button>
-    <input type="file" id="file-import" accept=".csv,.json,text/csv,application/json" hidden>
-  </footer>
-  <p class="foot-note" id="foot-user"></p>
+    <!-- Vencimientos -->
+    <div class="view" data-view="vencimientos" hidden>
+      <section class="card rounded-2xl" aria-labelledby="t-radar">
+        <div class="card-head">
+          <h2 class="card-title" id="t-radar"><span data-icon="radar"></span>Vencimientos</h2>
+          <button class="btn btn-ghost btn-sm" type="button" data-action="open-settings"><span data-icon="gear" data-size="16"></span>Configurar</button>
+        </div>
+        <div id="radar-list" class="alerts"></div>
+      </section>
+    </div>
+
+    <!-- Ajustes -->
+    <div class="view" data-view="ajustes" hidden>
+      <section class="card rounded-2xl" aria-labelledby="t-ajustes">
+        <div class="card-head"><h2 class="card-title" id="t-ajustes"><span data-icon="gear"></span>Ajustes</h2></div>
+        <div class="stack">
+          <button class="btn btn-ghost btn-block" type="button" data-action="open-settings"><span data-icon="gear" data-size="16"></span>Configurar vehículo y vencimientos</button>
+          <button class="btn btn-ghost btn-block" type="button" data-action="import"><span data-icon="upload" data-size="16"></span>Importar Datos</button>
+          <button class="btn btn-ghost btn-block" type="button" data-action="export"><span data-icon="download" data-size="16"></span>Exportar Copia de Seguridad (JSON)</button>
+          <button class="btn btn-ghost btn-block" type="button" data-action="logout" id="btn-logout"><span data-icon="logout" data-size="16"></span>Cerrar sesión</button>
+          <input type="file" id="file-import" accept=".csv,.json,text/csv,application/json" hidden>
+        </div>
+        <p class="foot-note" id="foot-user"></p>
+      </section>
+    </div>
+  </main>
 </div>
 </div>
 
@@ -480,6 +544,8 @@ const ICONS = {
   bolt: '<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>',
   tag: '<path d="M3 12V4h8l10 10-8 8z"/><circle cx="7.5" cy="8.5" r="1.2"/>',
   chev: '<path d="M9 5l7 7-7 7"/>',
+  home: '<path d="M4 11l8-7 8 7"/><path d="M6 10v10h12V10"/>',
+  calendar: '<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/>',
   google: '<path d="M21 12.2c0-.7-.1-1.3-.2-1.9H12v3.6h5a4.3 4.3 0 0 1-1.9 2.8v2.3h3A9 9 0 0 0 21 12.2z"/><path d="M12 21c2.4 0 4.5-.8 6-2.2l-3-2.3c-.8.6-1.8.9-3 .9a5.3 5.3 0 0 1-5-3.7H4v2.3A9 9 0 0 0 12 21z"/><path d="M7 13.7a5.4 5.4 0 0 1 0-3.4V8H4a9 9 0 0 0 0 8z"/><path d="M12 6.8c1.3 0 2.5.5 3.4 1.3l2.6-2.6A9 9 0 0 0 4 8l3 2.3A5.3 5.3 0 0 1 12 6.8z"/>'
 };
 const icon = (n, size = 20) => `<svg class="ico" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[n] || ''}</svg>`;
@@ -515,7 +581,7 @@ const state = {
   user: null, refuels: [], expenses: [], settings: {},
   loaded: { refuels: false, expenses: false, settings: false },
   online: navigator.onLine, pending: false,
-  ui: { fuel: 'GNC', cat: 'ALL', fuelLimit: 15, gxLimit: 20, expanded: new Set(), editRefuel: null, lleno: true, flOrder: [], flPre: null }
+  ui: { fuel: 'GNC', cat: 'ALL', fuelLimit: 15, gxLimit: 20, expanded: new Set(), editRefuel: null, lleno: true, flOrder: [], flPre: null, flOpen: false, tab: 'resumen' }
 };
 let store = null;       // almacén activo (memoria o Firestore)
 let unsubs = [];
@@ -974,7 +1040,7 @@ const unitPrice = r => r.precioUnitario > 0 ? r.precioUnitario : (r.volumen > 0 
 function renderAll() {
   if (!state.user) return;
   const D = derive();
-  renderHeader(D); renderRadar(D); renderPassport(D); renderFuel(D); renderExpenses(); renderCharts(D);
+  renderHeader(D); renderResumen(D); renderRadar(D); renderPassport(D); renderFuel(D); renderExpenses(); renderCharts(D);
 }
 
 function renderHeader(D) {
@@ -988,31 +1054,53 @@ function renderHeader(D) {
   dot.dataset.s = s; $('#hdr-sync').textContent = txt;
 }
 
+function alertRowHTML(a) {
+  const unitStr = { red: 'VENCIDA', yellow: 'PRÓXIMA', green: 'AL DÍA', none: 'SIN CONFIGURAR' };
+  let sub = esc(a.sub), big = '—', badge = unitStr.none;
+  if (a.st !== 'none') {
+    badge = a.kind === 'km' ? { red: 'ATRASADO', yellow: 'PRÓXIMO', green: 'AL DÍA' }[a.st] : unitStr[a.st];
+    if (a.kind === 'date') {
+      const when = a.days > 0 ? `en ${nf(a.days)} días` : a.days === 0 ? 'vence hoy' : `venció hace ${nf(-a.days)} días`;
+      sub = `Vence ${fmtDate(a.iso)} · ${when}`;
+      big = `${nf(a.days)}<small>días</small>`;
+    } else {
+      sub = `${a.sub} · próximo a los ${nf(a.target)} km`;
+      big = `${nf(a.rem)}<small>km</small>`;
+    }
+  }
+  const tag = a.st === 'none' ? 'button' : 'div';
+  const attrs = a.st === 'none' ? ' type="button" data-action="open-settings"' : '';
+  return `<${tag} class="alert" data-s="${a.st}"${attrs}>
+    <div class="alert-ico">${icon(a.icon, 22)}</div>
+    <div style="min-width:0"><div class="alert-name">${esc(a.label)}</div><div class="alert-sub">${sub}</div></div>
+    <div class="alert-right"><div class="alert-big num font-black">${big}</div><span class="badge">${badge}</span></div>
+  </${tag}>`;
+}
+
 function renderRadar(D) {
   const box = $('#radar-list');
   if (!allLoaded()) { box.innerHTML = skeleton(4); return; }
-  const unitStr = { red: 'VENCIDA', yellow: 'PRÓXIMA', green: 'AL DÍA', none: 'SIN CONFIGURAR' };
-  box.innerHTML = computeAlerts(D).map(a => {
-    let sub = esc(a.sub), big = '—', badge = unitStr.none;
-    if (a.st !== 'none') {
-      badge = a.kind === 'km' ? { red: 'ATRASADO', yellow: 'PRÓXIMO', green: 'AL DÍA' }[a.st] : unitStr[a.st];
-      if (a.kind === 'date') {
-        const when = a.days > 0 ? `en ${nf(a.days)} días` : a.days === 0 ? 'vence hoy' : `venció hace ${nf(-a.days)} días`;
-        sub = `Vence ${fmtDate(a.iso)} · ${when}`;
-        big = `${nf(a.days)}<small>días</small>`;
-      } else {
-        sub = `${a.sub} · próximo a los ${nf(a.target)} km`;
-        big = `${nf(a.rem)}<small>km</small>`;
-      }
-    }
-    const tag = a.st === 'none' ? 'button' : 'div';
-    const attrs = a.st === 'none' ? ' type="button" data-action="open-settings"' : '';
-    return `<${tag} class="alert" data-s="${a.st}"${attrs}>
-      <div class="alert-ico">${icon(a.icon, 22)}</div>
-      <div style="min-width:0"><div class="alert-name">${esc(a.label)}</div><div class="alert-sub">${sub}</div></div>
-      <div class="alert-right"><div class="alert-big num font-black">${big}</div><span class="badge">${badge}</span></div>
-    </${tag}>`;
-  }).join('');
+  box.innerHTML = computeAlerts(D).map(alertRowHTML).join('');
+}
+
+function renderResumen(D) {
+  const box = $('#resumen'), next = $('#next-list');
+  if (!allLoaded()) { box.innerHTML = skeleton(3); next.innerHTML = skeleton(3); return; }
+  const f = k => D.eff[k].value !== null ? `${nf(D.eff[k].value, 2)}<small>${FUELS[k].eff}</small>` : '—';
+  box.innerHTML = `
+    <div class="hero">
+      <div class="hero-label">Costo por kilómetro</div>
+      <div class="hero-val num font-black">${D.cpk !== null ? money(D.cpk, 2) : '—'}<small>/km</small></div>
+      <div class="hero-sub">${D.cpk !== null ? `${money(D.fuelTotal + D.otherTotal)} en ${nf(D.span)} km recorridos` : 'Se necesitan al menos 2 registros con odómetro'}</div>
+    </div>
+    <div class="grid-2">
+      <div class="tile"><div class="tile-label">Rendimiento Nafta</div><div class="tile-val num">${f('NAFTA')}</div></div>
+      <div class="tile"><div class="tile-label">Rendimiento GNC</div><div class="tile-val num">${f('GNC')}</div></div>
+      <div class="tile"><div class="tile-label">Combustible</div><div class="tile-val num">${money(D.fuelTotal)}</div><div class="tile-sub">${state.refuels.length} cargas</div></div>
+      <div class="tile"><div class="tile-label">Otros gastos</div><div class="tile-val num">${money(D.otherTotal)}</div><div class="tile-sub">${state.expenses.length} ítems</div></div>
+    </div>`;
+  const all = computeAlerts(D), set = all.filter(a => a.st !== 'none');
+  next.innerHTML = (set.length ? set : all).slice(0, 3).map(alertRowHTML).join('');
 }
 
 function renderPassport(D) {
@@ -1051,7 +1139,7 @@ function renderFuel(D) {
   const sw = $('#fl-lleno'); sw.setAttribute('aria-checked', String(state.ui.lleno));
   const editing = !!state.ui.editRefuel;
   $('#fl-submit-txt').textContent = editing ? 'Guardar cambios' : 'Registrar carga';
-  $('#fl-cancel').hidden = !editing;
+  $('#fl-formwrap').hidden = !state.ui.flOpen;
   prefillPrice(); updateFormState();
 
   const stats = $('#fl-stats'), hist = $('#fl-history');
@@ -1284,7 +1372,7 @@ function fillRefuelForm(r) {
   $('#fl-pu').value = pu ? fmtIn(pu, 2) : ''; $('#fl-costo').value = fmtIn(r.costoTotal, 2);
   ['fl-vol', 'fl-pu', 'fl-costo'].forEach(id => $('#' + id).classList.remove('auto'));
   $('#fl-estacion').value = r.estacion || ''; $('#fl-grado').value = r.grado || 'Nafta';
-  flErr(''); renderAll();
+  state.ui.flOpen = true; flErr(''); renderAll();
   $('#fl-form').scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
@@ -1311,7 +1399,7 @@ async function submitRefuel(e) {
   };
   await store.save('refuels', doc);
   toast(editing ? 'Carga actualizada.' : 'Carga registrada.', 'ok');
-  resetRefuelForm(); renderAll();
+  state.ui.flOpen = false; resetRefuelForm(); renderAll();
 }
 
 /* ---- Gastos: modal de alta/edición ---- */
@@ -1450,11 +1538,12 @@ const actions = {
   },
   'toggle-lleno': () => { state.ui.lleno = !state.ui.lleno; $('#fl-lleno').setAttribute('aria-checked', String(state.ui.lleno)); },
   'edit-refuel': el => { const r = state.refuels.find(x => x.id === el.dataset.id); if (r) fillRefuelForm(r); },
-  'refuel-cancel': () => { resetRefuelForm(); renderAll(); },
+  'new-refuel': () => { resetRefuelForm(); state.ui.flOpen = true; renderAll(); $('#fl-odo').focus(); },
+  'refuel-cancel': () => { state.ui.flOpen = false; resetRefuelForm(); renderAll(); },
   'del-refuel': async el => {
     const r = state.refuels.find(x => x.id === el.dataset.id); if (!r) return;
     if (await confirmDialog({ title: 'Eliminar carga', message: `Se eliminará la carga del ${fmtDate(r.fecha)} (${nf(r.odometro)} km, ${money(r.costoTotal)}).` })) {
-      if (state.ui.editRefuel === r.id) resetRefuelForm();
+      if (state.ui.editRefuel === r.id) { state.ui.flOpen = false; resetRefuelForm(); }
       await store.remove('refuels', r.id); toast('Carga eliminada.');
     }
   },
@@ -1497,8 +1586,22 @@ function bindEvents() {
   $('#fl-form').addEventListener('submit', submitRefuel);
   Object.keys(FL).forEach(k => $(FL[k]).addEventListener('input', () => recalcRefuel(k)));
   $('#file-import').addEventListener('change', e => handleImportFile(e.target.files[0]));
+  window.addEventListener('hashchange', route);
   window.addEventListener('online', () => { state.online = true; scheduleRender(); });
   window.addEventListener('offline', () => { state.online = false; scheduleRender(); });
+}
+
+/* ---- Pestañas (rutas por hash: #/resumen, #/cargas, #/gastos, #/metricas, #/vencimientos, #/ajustes) ---- */
+const TABS = { resumen: 'Resumen', cargas: 'Cargas', gastos: 'Gastos', metricas: 'Métricas', vencimientos: 'Vencimientos', ajustes: 'Ajustes' };
+function route() {
+  const h = location.hash.replace(/^#\/?/, '');
+  const tab = Object.hasOwn(TABS, h) ? h : 'resumen';
+  if (tab !== state.ui.tab) closeModal(true);   // nunca queda un modal abierto sobre otra pestaña
+  state.ui.tab = tab;
+  $$('[data-view]').forEach(v => { v.hidden = v.dataset.view !== tab; });
+  $$('#tabbar a').forEach(a => { if (a.dataset.tab === tab) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
+  document.title = `${TABS[tab]} · Garage Radar`;
+  window.scrollTo(0, 0);
 }
 
 function show(screen) {
@@ -1510,6 +1613,7 @@ function enterApp(user) {
   $('#foot-user').textContent = DEMO ? 'Modo demo local' : `Sesión: ${user.email || user.displayName || user.uid}`;
   resetRefuelForm();
   show('app');
+  route();
   startSession();
 }
 

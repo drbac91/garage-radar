@@ -68,12 +68,16 @@ Mapeo aplicado:
 
 Los ítems de un mismo service (misma fecha y odómetro) se muestran agrupados como un evento. La columna de eficiencia de Drivvo se ignora: la app recalcula con la regla de tanque lleno. La matrícula no se importa.
 
+## Uso
+
+La app tiene seis pestañas con ruta por hash (`#/resumen`, `#/cargas`, `#/gastos`, `#/metricas`, `#/vencimientos`, `#/ajustes`). En **Cargas**, el botón *Nueva carga* abre el formulario: completá dos de los tres campos (cantidad, precio por litro/m³ y total) y el tercero se calcula solo; el precio se prellena con el de la última carga del mismo combustible. Las cargas viejas sin precio guardado lo muestran derivado como total ÷ cantidad.
+
 ## Cálculos
 
 - **Rendimiento**: entre dos cargas "tanque lleno" consecutivas del mismo combustible, km recorridos ÷ volumen de las cargas posteriores al primer lleno (parciales incluidas) hasta el segundo lleno. El histórico es suma de km ÷ suma de volúmenes. Se descartan tramos con km ≤ 0 o fuera de 3–30 km por unidad.
 - **Costo por km**: (combustible + gastos) ÷ (odómetro máximo − mínimo).
 - **Mix de uso (estimado)**: los km entre dos cargas se atribuyen al combustible de la carga más reciente del par.
-- **Alertas**: fechas en rojo si vencieron, amarillo si faltan 30 días o menos; kilometraje en rojo si restan 0 km o menos, amarillo si restan 1.000 km o menos.
+- **Vencimientos**: fechas en rojo si vencieron, amarillo si faltan 30 días o menos; kilometraje en rojo si restan 0 km o menos, amarillo si restan 1.000 km o menos.
 
 ## Respaldo
 
