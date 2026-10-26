@@ -83,6 +83,7 @@ button{cursor:pointer}
 .field input,.field select,.field textarea{width:100%;min-width:0;background:var(--field);border:1px solid var(--line);border-radius:.75rem;padding:12px;font-size:16px;color-scheme:dark}
 .field input:focus,.field select:focus{border-color:var(--blue);outline:none;box-shadow:0 0 0 3px rgba(59,130,255,.25)}
 .field input.big{font-size:20px;font-weight:800}
+.field input.auto{border-style:dashed;color:var(--blue)}
 /* iOS Safari da a los input[type=date] un ancho mínimo propio que invade la columna vecina */
 .grid-2>*{min-width:0}
 .field input[type=date]{-webkit-appearance:none;appearance:none;display:block;min-width:0;max-width:100%;min-height:46px;text-align:left}
@@ -308,8 +309,10 @@ details.more-info summary{cursor:pointer;color:var(--blue);font-weight:700;font-
           <div class="field"><label for="fl-fecha">Fecha</label><input id="fl-fecha" type="date" required></div>
           <div class="field"><label for="fl-odo">Odómetro (km)</label><input id="fl-odo" class="big num" inputmode="numeric" placeholder="216188" required></div>
           <div class="field"><label for="fl-vol" id="fl-vol-label">Volumen (m³)</label><input id="fl-vol" class="big num" inputmode="decimal" placeholder="13,48" required></div>
+          <div class="field"><label for="fl-pu" id="fl-pu-label">Precio por m³ ($)</label><input id="fl-pu" class="big num" inputmode="decimal" placeholder="719,00" required></div>
           <div class="field"><label for="fl-costo">Costo total ($ ARS)</label><input id="fl-costo" class="big num" inputmode="decimal" placeholder="9692,12" required></div>
         </div>
+        <p class="help" style="margin:-4px 0 0">Completá dos de los tres (cantidad, precio, total) y el tercero se calcula solo.</p>
         <div class="field" id="fl-grado-wrap" hidden>
           <label for="fl-grado">Grado de nafta</label>
           <select id="fl-grado"><option value="Nafta">Nafta</option><option value="Nafta Super">Nafta Super</option><option value="Nafta Premium">Nafta Premium</option></select>
@@ -317,7 +320,6 @@ details.more-info summary{cursor:pointer;color:var(--blue);font-weight:700;font-
         <div class="field"><label for="fl-estacion">Estación (opcional)</label><input id="fl-estacion" maxlength="80"></div>
         <div class="row-between">
           <button type="button" class="switch" id="fl-lleno" role="switch" aria-checked="true" data-action="toggle-lleno"><span class="track"></span><span>¿Tanque lleno?</span></button>
-          <span id="fl-unit-price" class="muted num"></span>
         </div>
         <p id="fl-warn" class="form-warn" hidden></p>
         <p id="fl-error" class="form-error" role="alert" hidden></p>
@@ -513,7 +515,7 @@ const state = {
   user: null, refuels: [], expenses: [], settings: {},
   loaded: { refuels: false, expenses: false, settings: false },
   online: navigator.onLine, pending: false,
-  ui: { fuel: 'GNC', cat: 'ALL', fuelLimit: 15, gxLimit: 20, expanded: new Set(), editRefuel: null, lleno: true }
+  ui: { fuel: 'GNC', cat: 'ALL', fuelLimit: 15, gxLimit: 20, expanded: new Set(), editRefuel: null, lleno: true, flOrder: [], flPre: null }
 };
 let store = null;       // almacén activo (memoria o Firestore)
 let unsubs = [];
@@ -892,7 +894,7 @@ function buildJsonPlan(text) {
   const plan = { source: 'Respaldo JSON', refuels: [], expenses: [], settings: j.settings && typeof j.settings === 'object' ? j.settings : null, rejected: [], read: { Refuelling: j.refuels.length, Expense: j.expenses.length, Service: 0 } };
   j.refuels.forEach((r, i) => {
     const d = { id: typeof r.id === 'string' && r.id ? r.id : 'js_' + hash53(JSON.stringify(r)), fecha: String(r.fecha || ''), odometro: Number(r.odometro), combustible: r.combustible,
-      grado: r.grado || null, volumen: Number(r.volumen), costoTotal: Number(r.costoTotal), lleno: !!r.lleno, estacion: String(r.estacion || ''), notas: String(r.notas || ''), origen: r.origen || 'manual' };
+      grado: r.grado || null, volumen: Number(r.volumen), costoTotal: Number(r.costoTotal), ...(Number(r.precioUnitario) > 0 ? { precioUnitario: Number(r.precioUnitario) } : {}), lleno: !!r.lleno, estacion: String(r.estacion || ''), notas: String(r.notas || ''), origen: r.origen || 'manual' };
     const err = checkRefuel(d); err ? plan.rejected.push({ section: 'Refuelling', fila: i + 1, motivo: err }) : plan.refuels.push(d);
   });
   j.expenses.forEach((r, i) => {
@@ -967,7 +969,7 @@ let renderQueued = false;
 function scheduleRender() { if (renderQueued) return; renderQueued = true; requestAnimationFrame(() => { renderQueued = false; renderAll(); }); }
 const allLoaded = () => state.loaded.refuels && state.loaded.expenses && state.loaded.settings;
 const skeleton = (n = 3) => Array.from({ length: n }, () => '<div class="skel"></div>').join('');
-const unitPrice = r => r.volumen > 0 ? r.costoTotal / r.volumen : null;
+const unitPrice = r => r.precioUnitario > 0 ? r.precioUnitario : (r.volumen > 0 ? r.costoTotal / r.volumen : null);
 
 function renderAll() {
   if (!state.user) return;
@@ -1044,12 +1046,13 @@ function renderFuel(D) {
   const f = state.ui.fuel, F = FUELS[f];
   $$('#fuel-pill button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.fuel === f)));
   $('#fl-vol-label').textContent = f === 'GNC' ? 'Volumen (m³)' : 'Volumen (litros)';
+  $('#fl-pu-label').textContent = f === 'GNC' ? 'Precio por m³ ($)' : 'Precio por litro ($)';
   $('#fl-grado-wrap').hidden = f !== 'NAFTA';
   const sw = $('#fl-lleno'); sw.setAttribute('aria-checked', String(state.ui.lleno));
   const editing = !!state.ui.editRefuel;
   $('#fl-submit-txt').textContent = editing ? 'Guardar cambios' : 'Registrar carga';
   $('#fl-cancel').hidden = !editing;
-  updateUnitPrice();
+  prefillPrice(); updateFormState();
 
   const stats = $('#fl-stats'), hist = $('#fl-history');
   if (!allLoaded()) { stats.innerHTML = ''; hist.innerHTML = skeleton(3); return; }
@@ -1227,20 +1230,60 @@ function confirmDialog({ title, message, confirmText = 'Eliminar', danger = true
 
 /* ---- Cargas: formulario de carga ---- */
 const flErr = (msg) => { const e = $('#fl-error'); e.textContent = msg || ''; e.hidden = !msg; };
-function updateUnitPrice() {
-  const v = parseNum($('#fl-vol').value), c = parseNum($('#fl-costo').value);
-  $('#fl-unit-price').textContent = v > 0 && c >= 0 ? `${money(c / v, 2)}/${FUELS[state.ui.fuel].unit}` : '';
+// Los tres campos (cantidad, precio unitario, total) se relacionan: con dos completos se calcula el tercero.
+// state.ui.flOrder guarda el orden de edición; el campo editado hace más tiempo (o nunca) es el que se recalcula.
+const FL = { vol: '#fl-vol', pu: '#fl-pu', costo: '#fl-costo' };
+const fmtIn = (n, d) => String(+n.toFixed(d)).replace('.', ',');
+const flVal = k => parseNum($(FL[k]).value);
+const flOk = k => flVal(k) > 0;
+function lastPriceOf(fuel) {
+  const r = state.refuels.filter(x => x.combustible === fuel).sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)))[0];
+  const p = r ? unitPrice(r) : null;
+  return p > 0 ? p : null;
+}
+// Prellena el precio con el de la última carga del mismo combustible: una sola vez por combustible y solo si el campo está vacío,
+// para que los re-renders por sincronización no pisen lo que el usuario está escribiendo.
+function prefillPrice() {
+  const f = state.ui.fuel, el = $('#fl-pu');
+  if (!allLoaded() || state.ui.flPre === f || state.ui.editRefuel) return;
+  const p = lastPriceOf(f);
+  if (!p) return;
+  state.ui.flPre = f;
+  if (el.value === '') { el.value = fmtIn(p, 2); el.classList.add('auto'); updateFormState(); }
+}
+function recalcRefuel(edited) {
+  const ord = state.ui.flOrder;
+  const i = ord.indexOf(edited); if (i >= 0) ord.splice(i, 1); ord.push(edited);
+  $(FL[edited]).classList.remove('auto');
+  const others = Object.keys(FL).filter(k => k !== edited), valid = others.filter(flOk);
+  if (flOk(edited) && valid.length) {
+    const target = valid.length === 1 ? others.find(k => !flOk(k)) : others.sort((a, b) => ord.indexOf(a) - ord.indexOf(b))[0];
+    const a = target === 'vol' ? flVal('costo') / flVal('pu') : target === 'pu' ? flVal('costo') / flVal('vol') : flVal('vol') * flVal('pu');
+    const ex = Object.keys(FL).filter(k => k !== target);
+    if (ex.every(flOk) && Number.isFinite(a) && a > 0) {
+      const el = $(FL[target]); el.value = fmtIn(a, 2); el.classList.add('auto');
+    }
+  }
+  updateFormState();
+}
+function updateFormState() {
+  const ok = flOk('vol') && flOk('pu') && flOk('costo');
+  $('#fl-submit').disabled = !ok;
 }
 function resetRefuelForm() {
-  state.ui.editRefuel = null; state.ui.lleno = true;
-  ['fl-odo', 'fl-vol', 'fl-costo', 'fl-estacion'].forEach(id => { $('#' + id).value = ''; });
+  state.ui.editRefuel = null; state.ui.lleno = true; state.ui.flOrder = []; state.ui.flPre = null;
+  ['fl-odo', 'fl-vol', 'fl-pu', 'fl-costo', 'fl-estacion'].forEach(id => { $('#' + id).value = ''; $('#' + id).classList.remove('auto'); });
   $('#fl-fecha').value = todayISO(); $('#fl-grado').value = 'Nafta';
   flErr(''); $('#fl-warn').hidden = true;
+  prefillPrice(); updateFormState();
 }
 function fillRefuelForm(r) {
-  state.ui.fuel = r.combustible; state.ui.editRefuel = r.id; state.ui.lleno = !!r.lleno;
-  $('#fl-fecha').value = datePart(r.fecha); $('#fl-odo').value = r.odometro; $('#fl-vol').value = String(r.volumen).replace('.', ',');
-  $('#fl-costo').value = String(r.costoTotal).replace('.', ','); $('#fl-estacion').value = r.estacion || ''; $('#fl-grado').value = r.grado || 'Nafta';
+  state.ui.fuel = r.combustible; state.ui.editRefuel = r.id; state.ui.lleno = !!r.lleno; state.ui.flOrder = ['costo', 'vol', 'pu'];   // al editar, el precio unitario guardado manda sobre el total
+  $('#fl-fecha').value = datePart(r.fecha); $('#fl-odo').value = r.odometro; $('#fl-vol').value = fmtIn(r.volumen, 3);
+  const pu = unitPrice(r);
+  $('#fl-pu').value = pu ? fmtIn(pu, 2) : ''; $('#fl-costo').value = fmtIn(r.costoTotal, 2);
+  ['fl-vol', 'fl-pu', 'fl-costo'].forEach(id => $('#' + id).classList.remove('auto'));
+  $('#fl-estacion').value = r.estacion || ''; $('#fl-grado').value = r.grado || 'Nafta';
   flErr(''); renderAll();
   $('#fl-form').scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
@@ -1248,11 +1291,12 @@ function fillRefuelForm(r) {
 async function submitRefuel(e) {
   e.preventDefault(); flErr('');
   const f = state.ui.fuel, editing = state.refuels.find(r => r.id === state.ui.editRefuel);
-  const fecha = $('#fl-fecha').value, odo = parseKm($('#fl-odo').value), vol = parseNum($('#fl-vol').value), costo = parseNum($('#fl-costo').value);
+  const fecha = $('#fl-fecha').value, odo = parseKm($('#fl-odo').value), vol = parseNum($('#fl-vol').value), costo = parseNum($('#fl-costo').value), pu = parseNum($('#fl-pu').value);
   if (!isValidDate(fecha)) return flErr('Ingresá una fecha válida.');
   if (!(odo > 0)) return flErr('El odómetro debe ser un número mayor a 0.');
   if (!(vol > 0)) return flErr(`El volumen (${FUELS[f].unit}) debe ser mayor a 0.`);
   if (!(costo > 0)) return flErr('El costo total debe ser mayor a 0.');
+  if (!(pu > 0)) return flErr(`El precio por ${FUELS[f].unit} debe ser mayor a 0.`);
 
   // Aviso (no bloqueante) si el odómetro retrocede respecto de la carga previa por fecha.
   const prev = state.refuels.filter(r => r.id !== state.ui.editRefuel && datePart(r.fecha) <= fecha).sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)))[0];
@@ -1263,7 +1307,7 @@ async function submitRefuel(e) {
   const time = editing && datePart(editing.fecha) === fecha ? (String(editing.fecha).slice(11) || '12:00:00') : nowTime();
   const doc = {
     ...(editing ? { id: editing.id } : {}), fecha: `${fecha}T${time}`, odometro: odo, combustible: f, grado: f === 'NAFTA' ? $('#fl-grado').value : null,
-    volumen: vol, costoTotal: costo, lleno: state.ui.lleno, estacion: $('#fl-estacion').value.trim(), notas: editing?.notas || '', origen: editing?.origen || 'manual'
+    volumen: vol, costoTotal: costo, precioUnitario: pu, lleno: state.ui.lleno, estacion: $('#fl-estacion').value.trim(), notas: editing?.notas || '', origen: editing?.origen || 'manual'
   };
   await store.save('refuels', doc);
   toast(editing ? 'Carga actualizada.' : 'Carga registrada.', 'ok');
@@ -1398,7 +1442,12 @@ function showPlanPreview(plan) {
 const actions = {
   login: () => login(),
   logout: () => logout(),
-  'set-fuel': el => { state.ui.fuel = el.dataset.fuel; state.ui.fuelLimit = 15; if (state.ui.editRefuel) resetRefuelForm(); renderAll(); },
+  'set-fuel': el => {
+    state.ui.fuel = el.dataset.fuel; state.ui.fuelLimit = 15;
+    if (state.ui.editRefuel) resetRefuelForm();
+    else { const pu = $('#fl-pu'); if (pu.classList.contains('auto')) { pu.value = ''; pu.classList.remove('auto'); } state.ui.flPre = null; updateFormState(); }
+    renderAll();
+  },
   'toggle-lleno': () => { state.ui.lleno = !state.ui.lleno; $('#fl-lleno').setAttribute('aria-checked', String(state.ui.lleno)); },
   'edit-refuel': el => { const r = state.refuels.find(x => x.id === el.dataset.id); if (r) fillRefuelForm(r); },
   'refuel-cancel': () => { resetRefuelForm(); renderAll(); },
@@ -1446,8 +1495,7 @@ function bindEvents() {
     }
   });
   $('#fl-form').addEventListener('submit', submitRefuel);
-  $('#fl-vol').addEventListener('input', updateUnitPrice);
-  $('#fl-costo').addEventListener('input', updateUnitPrice);
+  Object.keys(FL).forEach(k => $(FL[k]).addEventListener('input', () => recalcRefuel(k)));
   $('#file-import').addEventListener('change', e => handleImportFile(e.target.files[0]));
   window.addEventListener('online', () => { state.online = true; scheduleRender(); });
   window.addEventListener('offline', () => { state.online = false; scheduleRender(); });
