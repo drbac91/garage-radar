@@ -1,0 +1,6 @@
+.DS_Store
+# Exportaciones de Drivvo: contienen datos personales (nombre, matrícula)
+*.csv
+# Copias de seguridad de la app
+autolog-backup-*.json
+*backup*.json

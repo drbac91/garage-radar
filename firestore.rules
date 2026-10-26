@@ -1,0 +1,24 @@
+rules_version = '2';
+
+// Garage Radar · reglas de Firestore.
+// Solo el dueño (UID autorizado) puede leer/escribir sus datos bajo users/{uid}/**.
+// Reemplazá COMPLETAR_UID por tu UID (Firebase Console → Authentication → Users → "User UID"). Las reglas publicadas en la consola son las que cuentan; no subas tu UID real al repo.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function esDueno(uid) {
+      return request.auth != null
+          && request.auth.uid == uid
+          && request.auth.uid == 'COMPLETAR_UID';
+    }
+
+    match /users/{uid}/{document=**} {
+      allow read, write: if esDueno(uid);
+    }
+
+    // Todo lo demás, denegado.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
