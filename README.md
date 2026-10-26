@@ -70,7 +70,11 @@ Los ítems de un mismo service (misma fecha y odómetro) se muestran agrupados c
 
 ## Uso
 
-La app tiene seis pestañas con ruta por hash (`#/resumen`, `#/cargas`, `#/gastos`, `#/metricas`, `#/vencimientos`, `#/ajustes`). En **Cargas**, el botón *Nueva carga* abre el formulario: completá dos de los tres campos (cantidad, precio por litro/m³ y total) y el tercero se calcula solo; el precio se prellena con el de la última carga del mismo combustible. Las cargas viejas sin precio guardado lo muestran derivado como total ÷ cantidad.
+La app tiene seis pestañas con ruta por hash (`#/resumen`, `#/cargas`, `#/gastos`, `#/metricas`, `#/vencimientos`, `#/ajustes`).
+
+**Registrar rápido:** el botón **+** flotante está en todas las pestañas y abre una hoja con dos opciones, *Carga de combustible* y *Gasto*. También se abren desde *Nueva carga* / *Nuevo gasto* en sus pestañas y al editar un registro (mismo formulario).
+
+En la carga de combustible el combustible viene preseleccionado con el de la última carga, la fecha es la de hoy y el foco queda en el odómetro (se muestra el último registrado). Completá dos de los tres campos (cantidad, precio por litro/m³, total) y el tercero se calcula solo; el precio se prellena con el de la última carga del mismo combustible. Si el odómetro es menor al anterior, la app avisa en el mismo formulario y se confirma tocando *Guardar* de nuevo. Las cargas viejas sin precio guardado lo muestran derivado como total ÷ cantidad.
 
 ## Cálculos
 

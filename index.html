@@ -19,6 +19,7 @@
   --line:rgba(255,255,255,.07); --text:#f4f3fa; --muted:#9794ad;
   --yellow:#f7be00; --red:#ff3b4e; --green:#10d98a; --blue:#3b82ff; --violet:#8b7bff;
   --gnc:#22d3c5; --nafta:#6c8cff;
+  --bar-h:64px;
   --spring:cubic-bezier(.22,1,.36,1);   /* ease-out crítico: sin rebote, asienta suave */
   --font:-apple-system,BlinkMacSystemFont,"SF Pro Display","Inter",system-ui,"Segoe UI",Roboto,sans-serif;
 }
@@ -38,9 +39,9 @@ button{cursor:pointer}
 
 /* Layout */
 .wrap{max-width:560px;margin:0 auto;padding:14px 16px calc(40px + env(safe-area-inset-bottom))}
-.wrap{padding-bottom:calc(92px + env(safe-area-inset-bottom))}
+.wrap{padding-bottom:calc(var(--bar-h) + 100px + env(safe-area-inset-bottom))}
 .view{display:grid;gap:16px;grid-template-columns:minmax(0,1fr);align-items:start;animation:view-in .32s var(--spring) both}
-@media(min-width:768px){.wrap{max-width:900px;padding-bottom:calc(40px + env(safe-area-inset-bottom))}}
+@media(min-width:768px){.wrap{max-width:900px;padding-bottom:calc(110px + env(safe-area-inset-bottom))}}
 @media(min-width:1024px){.wrap{max-width:1180px}.view.cols2{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
 
 /* Pestañas: barra inferior fija en móvil, barra superior en escritorio */
@@ -262,10 +263,25 @@ details.more-info summary{cursor:pointer;color:var(--blue);font-weight:700;font-
 .footer{margin-top:28px;padding-top:18px;border-top:1px solid var(--line);display:flex;flex-wrap:wrap;gap:10px;justify-content:center}
 .footer .btn{font-size:13px;padding:8px 12px;color:var(--muted)}
 .foot-note{text-align:center;font-size:11.5px;color:var(--muted);margin-top:12px}
-#toasts{position:fixed;left:0;right:0;bottom:calc(80px + env(safe-area-inset-bottom));z-index:80;display:grid;gap:8px;justify-items:center;padding:0 16px;pointer-events:none}
+#toasts{position:fixed;left:0;right:0;bottom:calc(var(--bar-h) + 90px + env(safe-area-inset-bottom));z-index:80;display:grid;gap:8px;justify-items:center;padding:0 16px;pointer-events:none}
 .toast{pointer-events:auto;background:#262536;border:1px solid var(--line);border-left:4px solid var(--blue);padding:11px 14px;border-radius:.8rem;max-width:460px;font-size:14px;box-shadow:0 10px 30px rgba(0,0,0,.5)}
 .toast.err{border-left-color:var(--red)}.toast.ok{border-left-color:var(--green)}
-@media(min-width:768px){#toasts{bottom:calc(16px + env(safe-area-inset-bottom))}}
+@media(min-width:768px){#toasts{bottom:calc(24px + env(safe-area-inset-bottom))}}
+
+/* Acción rápida: botón flotante + hoja de elección */
+.fab{position:fixed;z-index:45;right:16px;bottom:calc(var(--bar-h) + 14px + env(safe-area-inset-bottom));width:60px;height:60px;border-radius:50%;border:0;display:grid;place-items:center;color:#fff;
+  background:linear-gradient(135deg,#3b82ff,#8b7bff);box-shadow:0 10px 28px rgba(59,130,255,.45),0 2px 6px rgba(0,0,0,.4);transition:transform .35s var(--spring),opacity .2s}
+.fab:active{transform:scale(.92);transition-duration:80ms}
+.has-modal .fab{opacity:0;transform:scale(.7);pointer-events:none}
+@media(min-width:768px){.fab{right:max(20px,calc((100vw - 900px)/2 + 20px));bottom:calc(24px + env(safe-area-inset-bottom))}}
+@media(min-width:1024px){.fab{right:max(20px,calc((100vw - 1180px)/2 + 20px))}}
+.quick{display:grid;gap:12px}
+.quick-btn{display:flex;align-items:center;gap:14px;width:100%;min-height:72px;padding:14px 16px;border-radius:1rem;background:var(--card2);border:1px solid var(--line);text-align:left;color:inherit;transition:transform .35s var(--spring),background-color .2s}
+.quick-btn:hover{background:rgba(255,255,255,.07)}
+.quick-btn:active{transform:scale(.97);transition-duration:80ms}
+.quick-ico{width:48px;height:48px;border-radius:14px;background:rgba(255,255,255,.07);display:grid;place-items:center;flex:none}
+.quick-btn b{display:block;font-size:16px;line-height:1.2}
+.quick-btn small{display:block;color:var(--muted);font-size:12.5px;margin-top:2px}
 
 @media(prefers-reduced-motion:reduce){   /* sin desplazamientos ni resortes: solo fundidos cortos */
   *,*::before,*::after{transition:none!important}
@@ -373,32 +389,6 @@ details.more-info summary{cursor:pointer;color:var(--blue);font-weight:700;font-
         <button type="button" data-action="set-fuel" data-fuel="NAFTA" aria-pressed="false">NAFTA</button>
         <button type="button" data-action="set-fuel" data-fuel="GNC" aria-pressed="true">GNC</button>
       </div>
-      <div id="fl-formwrap" hidden>
-      <form id="fl-form" class="stack" novalidate autocomplete="off">
-        <div class="grid-2">
-          <div class="field"><label for="fl-fecha">Fecha</label><input id="fl-fecha" type="date" required></div>
-          <div class="field"><label for="fl-odo">Odómetro (km)</label><input id="fl-odo" class="big num" inputmode="numeric" placeholder="216188" required></div>
-          <div class="field"><label for="fl-vol" id="fl-vol-label">Volumen (m³)</label><input id="fl-vol" class="big num" inputmode="decimal" placeholder="13,48" required></div>
-          <div class="field"><label for="fl-pu" id="fl-pu-label">Precio por m³ ($)</label><input id="fl-pu" class="big num" inputmode="decimal" placeholder="719,00" required></div>
-          <div class="field"><label for="fl-costo">Costo total ($ ARS)</label><input id="fl-costo" class="big num" inputmode="decimal" placeholder="9692,12" required></div>
-        </div>
-        <p class="help" style="margin:-4px 0 0">Completá dos de los tres (cantidad, precio, total) y el tercero se calcula solo.</p>
-        <div class="field" id="fl-grado-wrap" hidden>
-          <label for="fl-grado">Grado de nafta</label>
-          <select id="fl-grado"><option value="Nafta">Nafta</option><option value="Nafta Super">Nafta Super</option><option value="Nafta Premium">Nafta Premium</option></select>
-        </div>
-        <div class="field"><label for="fl-estacion">Estación (opcional)</label><input id="fl-estacion" maxlength="80"></div>
-        <div class="row-between">
-          <button type="button" class="switch" id="fl-lleno" role="switch" aria-checked="true" data-action="toggle-lleno"><span class="track"></span><span>¿Tanque lleno?</span></button>
-        </div>
-        <p id="fl-warn" class="form-warn" hidden></p>
-        <p id="fl-error" class="form-error" role="alert" hidden></p>
-        <div class="actions">
-          <button class="btn btn-primary" type="submit" id="fl-submit"><span data-icon="plus" data-size="18"></span><span id="fl-submit-txt">Registrar carga</span></button>
-          <button class="btn btn-ghost" type="button" id="fl-cancel" data-action="refuel-cancel">Cancelar</button>
-        </div>
-      </form>
-      </div>
       <div id="fl-stats" class="grid-2" style="margin-top:18px"></div>
       <div id="fl-history" style="margin-top:14px"></div>
     </section>
@@ -460,6 +450,8 @@ details.more-info summary{cursor:pointer;color:var(--blue);font-weight:700;font-
   </main>
 </div>
 </div>
+
+<button class="fab" id="fab" type="button" data-action="quick-add" aria-label="Registrar carga o gasto" title="Registrar carga o gasto"><span data-icon="plus" data-size="28"></span></button>
 
 <div id="modal-root"></div>
 <div id="toasts" aria-live="polite"></div>
@@ -619,7 +611,7 @@ const state = {
   user: null, refuels: [], expenses: [], settings: {},
   loaded: { refuels: false, expenses: false, settings: false },
   online: navigator.onLine, pending: false,
-  ui: { fuel: 'GNC', cat: 'ALL', fuelLimit: 15, gxLimit: 20, expanded: new Set(), editRefuel: null, lleno: true, flOrder: [], flPre: null, flOpen: false, tab: 'resumen' }
+  ui: { fuel: 'GNC', cat: 'ALL', fuelLimit: 15, gxLimit: 20, expanded: new Set(), editRefuel: null, lleno: true, flOrder: [], flPre: null, flFuel: 'GNC', flArmed: null, tab: 'resumen' }
 };
 let store = null;       // almacén activo (memoria o Firestore)
 let unsubs = [];
@@ -1172,14 +1164,7 @@ function renderFuel(D) {
   const f = state.ui.fuel, F = FUELS[f];
   $$('#fuel-pill button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.fuel === f)));
   $('#fuel-pill').dataset.fuel = f;
-  $('#fl-vol-label').textContent = f === 'GNC' ? 'Volumen (m³)' : 'Volumen (litros)';
-  $('#fl-pu-label').textContent = f === 'GNC' ? 'Precio por m³ ($)' : 'Precio por litro ($)';
-  $('#fl-grado-wrap').hidden = f !== 'NAFTA';
-  const sw = $('#fl-lleno'); sw.setAttribute('aria-checked', String(state.ui.lleno));
-  const editing = !!state.ui.editRefuel;
-  $('#fl-submit-txt').textContent = editing ? 'Guardar cambios' : 'Registrar carga';
-  $('#fl-formwrap').hidden = !state.ui.flOpen;
-  prefillPrice(); updateFormState();
+  prefillPrice();   // si el formulario ya está abierto cuando llegan los datos, completa el precio
 
   const stats = $('#fl-stats'), hist = $('#fl-history');
   if (!allLoaded()) { stats.innerHTML = ''; hist.innerHTML = skeleton(3); return; }
@@ -1193,7 +1178,7 @@ function renderFuel(D) {
     <div class="tile"><div class="tile-label">Último tramo</div><div class="tile-val num">${last ? nf(last.eff, 2) : '—'}<small>${F.eff}</small></div><div class="tile-sub">${last ? fmtDate(last.fecha) : 'sin tramos válidos'}</div></div>
     <div class="tile" style="grid-column:1/-1"><div class="tile-label">Último precio</div><div class="tile-val num">${lastPrice !== null ? money(lastPrice, 2) : '—'}<small>/${F.unit}</small></div></div>`;
 
-  if (!list.length) { hist.innerHTML = `<div class="empty">Todavía no hay cargas de ${f}. Registrá la primera arriba.</div>`; return; }
+  if (!list.length) { hist.innerHTML = `<div class="empty">Todavía no hay cargas de ${f}. Tocá “+” para registrar la primera.</div>`; return; }
   const shown = list.slice(0, state.ui.fuelLimit);
   hist.innerHTML = `<ul class="list">${shown.map(r => {
     const seg = D.segById[r.id], pu = unitPrice(r);
@@ -1314,10 +1299,11 @@ function renderCharts(D) {
 
 /* ===================== 8. MODALES Y FORMULARIOS ========================= */
 let modal = null;
-function openModal({ title, body, wide = false, onClose }) {
+function openModal({ title, body, wide = false, onClose, focus = null }) {
+  const prevFocus = modal ? modal.prev : document.activeElement;   // al reemplazar un modal, el foco vuelve al disparador original
   closeModal(true, true);
   $$('.modal-back.out').forEach(e => e.remove());   // nunca hay dos overlays a la vez
-  const prev = document.activeElement;
+  const prev = prevFocus;
   const back = document.createElement('div');
   back.className = 'modal-back';
   back.innerHTML = `<div class="sheet ${wide ? 'wide' : ''}" role="dialog" aria-modal="true" aria-labelledby="m-title">
@@ -1326,13 +1312,15 @@ function openModal({ title, body, wide = false, onClose }) {
     <div class="sheet-body">${body}</div></div>`;
   $('#modal-root').appendChild(back);
   document.documentElement.style.overflow = 'hidden';   // bloquea el scroll del fondo mientras hay un modal
+  document.documentElement.classList.add('has-modal');   // oculta el botón flotante
   hydrateIcons(back);
   modal = { el: back, prev, onClose };
   enableSheetDrag(back);
   back.addEventListener('mousedown', e => { if (e.target === back) closeModal(); });
   back.addEventListener('click', e => { if (e.target.closest('[data-modal-close]')) closeModal(); });
-  const first = $('input:not([type=checkbox]),select,button.btn-primary', back);
-  setTimeout(() => (first || $('[data-modal-close]', back)).focus(), 30);
+  const target = focus && $(focus, back);
+  if (target) target.focus({ preventScroll: true });   // síncrono: iOS solo abre el teclado si el foco ocurre dentro del toque
+  else { const first = $('input:not([type=checkbox]),select,button.btn-primary', back); setTimeout(() => (first || $('[data-modal-close]', back)).focus(), 30); }
   return back;
 }
 // Arrastrar la hoja hacia abajo para cerrarla (solo móvil): sigue al dedo 1:1, resiste hacia arriba
@@ -1383,6 +1371,7 @@ function closeModal(silent = false, instant = false) {
     setTimeout(() => m.el.remove(), 400);
   }
   document.documentElement.style.overflow = '';
+  document.documentElement.classList.remove('has-modal');
   if (m.prev && m.prev.focus) try { m.prev.focus(); } catch (e) { /* noop */ }
   if (!silent && m.onClose) m.onClose();
 }
@@ -1401,14 +1390,16 @@ function confirmDialog({ title, message, confirmText = 'Eliminar', danger = true
   });
 }
 
-/* ---- Cargas: formulario de carga ---- */
-const flErr = (msg) => { const e = $('#fl-error'); e.textContent = msg || ''; e.hidden = !msg; };
+/* ---- Cargas: formulario de carga (modal) ---- */
+const flErr = (msg) => { const e = $('#fl-error'); if (e) { e.textContent = msg || ''; e.hidden = !msg; } };
 // Los tres campos (cantidad, precio unitario, total) se relacionan: con dos completos se calcula el tercero.
 // state.ui.flOrder guarda el orden de edición; el campo editado hace más tiempo (o nunca) es el que se recalcula.
 const FL = { vol: '#fl-vol', pu: '#fl-pu', costo: '#fl-costo' };
 const fmtIn = (n, d) => String(+n.toFixed(d)).replace('.', ',');
 const flVal = k => parseNum($(FL[k]).value);
 const flOk = k => flVal(k) > 0;
+const lastOdo = () => state.refuels.reduce((m, r) => Math.max(m, r.odometro || 0), 0);
+const lastFuelUsed = () => ([...state.refuels].sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)))[0] || {}).combustible || 'GNC';
 function lastPriceOf(fuel) {
   const r = state.refuels.filter(x => x.combustible === fuel).sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)))[0];
   const p = r ? unitPrice(r) : null;
@@ -1417,8 +1408,8 @@ function lastPriceOf(fuel) {
 // Prellena el precio con el de la última carga del mismo combustible: una sola vez por combustible y solo si el campo está vacío,
 // para que los re-renders por sincronización no pisen lo que el usuario está escribiendo.
 function prefillPrice() {
-  const f = state.ui.fuel, el = $('#fl-pu');
-  if (!allLoaded() || state.ui.flPre === f || state.ui.editRefuel) return;
+  const f = state.ui.flFuel, el = $('#fl-pu');
+  if (!el || !allLoaded() || state.ui.flPre === f || state.ui.editRefuel) return;
   const p = lastPriceOf(f);
   if (!p) return;
   state.ui.flPre = f;
@@ -1440,30 +1431,81 @@ function recalcRefuel(edited) {
   updateFormState();
 }
 function updateFormState() {
-  const ok = flOk('vol') && flOk('pu') && flOk('costo');
-  $('#fl-submit').disabled = !ok;
+  const b = $('#fl-submit'); if (!b) return;
+  b.disabled = !(flOk('vol') && flOk('pu') && flOk('costo'));
 }
-function resetRefuelForm() {
-  state.ui.editRefuel = null; state.ui.lleno = true; state.ui.flOrder = []; state.ui.flPre = null;
-  ['fl-odo', 'fl-vol', 'fl-pu', 'fl-costo', 'fl-estacion'].forEach(id => { $('#' + id).value = ''; $('#' + id).classList.remove('auto'); });
-  $('#fl-fecha').value = todayISO(); $('#fl-grado').value = 'Nafta';
-  flErr(''); $('#fl-warn').hidden = true;
+// Etiquetas, selector y grado según el combustible del formulario (independiente del filtro de la pestaña Cargas).
+function syncRefuelFuel() {
+  const pill = $('#fl-pill'); if (!pill) return;
+  const f = state.ui.flFuel;
+  pill.dataset.fuel = f; $$('button', pill).forEach(b => b.setAttribute('aria-pressed', String(b.dataset.fuel === f)));
+  $('#fl-vol-label').textContent = f === 'GNC' ? 'Volumen (m³)' : 'Volumen (litros)';
+  $('#fl-pu-label').textContent = f === 'GNC' ? 'Precio por m³ ($)' : 'Precio por litro ($)';
+  $('#fl-grado-wrap').hidden = f !== 'NAFTA';
+  $('#fl-lleno').setAttribute('aria-checked', String(state.ui.lleno));
   prefillPrice(); updateFormState();
 }
-function fillRefuelForm(r) {
-  state.ui.fuel = r.combustible; state.ui.editRefuel = r.id; state.ui.lleno = !!r.lleno; state.ui.flOrder = ['costo', 'vol', 'pu'];   // al editar, el precio unitario guardado manda sobre el total
-  $('#fl-fecha').value = datePart(r.fecha); $('#fl-odo').value = r.odometro; $('#fl-vol').value = fmtIn(r.volumen, 3);
-  const pu = unitPrice(r);
-  $('#fl-pu').value = pu ? fmtIn(pu, 2) : ''; $('#fl-costo').value = fmtIn(r.costoTotal, 2);
-  ['fl-vol', 'fl-pu', 'fl-costo'].forEach(id => $('#' + id).classList.remove('auto'));
-  $('#fl-estacion').value = r.estacion || ''; $('#fl-grado').value = r.grado || 'Nafta';
-  state.ui.flOpen = true; flErr(''); renderAll();
-  $('#fl-form').scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+// Enter avanza al siguiente campo; en los campos de `submitIds` guarda si el formulario ya está listo (o si es el último).
+function enterFlow(form, submitIds, ready) {
+  form.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' || e.target.tagName !== 'INPUT' || e.isComposing) return;
+    e.preventDefault();
+    const items = $$('input:not([type=checkbox]),select', form).filter(x => !x.disabled && x.offsetParent !== null);
+    const i = items.indexOf(e.target);
+    if ((submitIds.includes(e.target.id) && ready()) || i === items.length - 1) { form.requestSubmit(); return; }
+    items[i + 1].focus();
+  });
 }
 
-async function submitRefuel(e) {
+function openRefuelModal(existing) {
+  const f = existing ? existing.combustible : lastFuelUsed(), odo = lastOdo();
+  // El estado del formulario se reinicia al abrir (no al cerrar): cualquier camino de cierre queda cubierto.
+  Object.assign(state.ui, { editRefuel: existing ? existing.id : null, flFuel: f, lleno: existing ? !!existing.lleno : true, flOrder: existing ? ['costo', 'vol', 'pu'] : [], flPre: null, flArmed: null });
+  const el = openModal({ title: existing ? 'Editar carga' : 'Nueva carga', focus: '#fl-odo', body: `
+    <form id="fl-form" class="sheet-body" novalidate autocomplete="off">
+      <div class="pill" id="fl-pill" role="group" aria-label="Tipo de combustible" style="margin-bottom:0">
+        <button type="button" data-action="fl-fuel" data-fuel="NAFTA" aria-pressed="false">NAFTA</button>
+        <button type="button" data-action="fl-fuel" data-fuel="GNC" aria-pressed="false">GNC</button>
+      </div>
+      <div class="field"><label for="fl-odo">Odómetro (km)</label><input id="fl-odo" class="big num" inputmode="numeric" enterkeyhint="next" placeholder="${odo ? odo + 1 : '216188'}" required>
+        ${odo ? `<span class="help" style="margin:0">Último registrado: ${nf(odo)} km</span>` : ''}</div>
+      <div class="grid-2">
+        <div class="field"><label for="fl-vol" id="fl-vol-label">Volumen (m³)</label><input id="fl-vol" class="big num" inputmode="decimal" enterkeyhint="next" placeholder="13,48" required></div>
+        <div class="field"><label for="fl-pu" id="fl-pu-label">Precio por m³ ($)</label><input id="fl-pu" class="big num" inputmode="decimal" enterkeyhint="next" placeholder="719,00" required></div>
+        <div class="field"><label for="fl-costo">Costo total ($ ARS)</label><input id="fl-costo" class="big num" inputmode="decimal" enterkeyhint="done" placeholder="9692,12" required></div>
+        <div class="field"><label for="fl-fecha">Fecha</label><input id="fl-fecha" type="date" required></div>
+      </div>
+      <p class="help" style="margin:-4px 0 0">Completá dos de los tres (cantidad, precio, total) y el tercero se calcula solo.</p>
+      <div class="field" id="fl-grado-wrap" hidden>
+        <label for="fl-grado">Grado de nafta</label>
+        <select id="fl-grado"><option value="Nafta">Nafta</option><option value="Nafta Super">Nafta Super</option><option value="Nafta Premium">Nafta Premium</option></select>
+      </div>
+      <div class="field"><label for="fl-estacion">Estación (opcional)</label><input id="fl-estacion" maxlength="80" enterkeyhint="done"></div>
+      <button type="button" class="switch" id="fl-lleno" role="switch" aria-checked="true" data-action="toggle-lleno"><span class="track"></span><span>¿Tanque lleno?</span></button>
+      <p id="fl-warn" class="form-warn" role="status" hidden></p>
+      <p id="fl-error" class="form-error" role="alert" hidden></p>
+      <div class="sheet-foot"><button class="btn btn-ghost" type="button" data-modal-close>Cancelar</button>
+        <button class="btn btn-primary" type="submit" id="fl-submit"><span data-icon="plus" data-size="18"></span>${existing ? 'Guardar cambios' : 'Registrar carga'}</button></div>
+    </form>` });
+  $('#fl-fecha', el).value = existing ? datePart(existing.fecha) : todayISO();
+  if (existing) {
+    const pu = unitPrice(existing);
+    $('#fl-odo', el).value = existing.odometro; $('#fl-vol', el).value = fmtIn(existing.volumen, 3);
+    $('#fl-pu', el).value = pu ? fmtIn(pu, 2) : ''; $('#fl-costo', el).value = fmtIn(existing.costoTotal, 2);
+    $('#fl-estacion', el).value = existing.estacion || ''; $('#fl-grado', el).value = existing.grado || 'Nafta';
+  }
+  const form = $('#fl-form', el);
+  Object.keys(FL).forEach(k => $(FL[k], el).addEventListener('input', () => recalcRefuel(k)));
+  $('#fl-odo', el).addEventListener('input', () => { state.ui.flArmed = null; $('#fl-warn', el).hidden = true; });
+  enterFlow(form, ['fl-vol', 'fl-pu', 'fl-costo', 'fl-fecha', 'fl-estacion'], () => flOk('vol') && flOk('pu') && flOk('costo') && parseKm($('#fl-odo').value) > 0);
+  form.addEventListener('submit', ev => submitRefuel(ev, el));
+  syncRefuelFuel();
+}
+
+async function submitRefuel(e, el) {
   e.preventDefault(); flErr('');
-  const f = state.ui.fuel, editing = state.refuels.find(r => r.id === state.ui.editRefuel);
+  const f = state.ui.flFuel, editing = state.refuels.find(r => r.id === state.ui.editRefuel);
   const fecha = $('#fl-fecha').value, odo = parseKm($('#fl-odo').value), vol = parseNum($('#fl-vol').value), costo = parseNum($('#fl-costo').value), pu = parseNum($('#fl-pu').value);
   if (!isValidDate(fecha)) return flErr('Ingresá una fecha válida.');
   if (!(odo > 0)) return flErr('El odómetro debe ser un número mayor a 0.');
@@ -1471,11 +1513,13 @@ async function submitRefuel(e) {
   if (!(costo > 0)) return flErr('El costo total debe ser mayor a 0.');
   if (!(pu > 0)) return flErr(`El precio por ${FUELS[f].unit} debe ser mayor a 0.`);
 
-  // Aviso (no bloqueante) si el odómetro retrocede respecto de la carga previa por fecha.
+  // Aviso (no bloqueante) si el odómetro retrocede respecto de la carga previa por fecha. Va en el mismo formulario:
+  // un diálogo aparte reemplazaría el modal y el usuario perdería lo que escribió. El segundo "Guardar" con el mismo valor confirma.
   const prev = state.refuels.filter(r => r.id !== state.ui.editRefuel && datePart(r.fecha) <= fecha).sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)))[0];
-  if (prev && odo < prev.odometro) {
-    const ok = await confirmDialog({ title: 'Odómetro menor al anterior', message: `La carga previa (${fmtDate(prev.fecha)}) tiene ${nf(prev.odometro)} km y estás ingresando ${nf(odo)} km. ¿Guardar igual?`, confirmText: 'Guardar igual', danger: false });
-    if (!ok) return;
+  if (prev && odo < prev.odometro && state.ui.flArmed !== odo) {
+    state.ui.flArmed = odo;
+    const w = $('#fl-warn'); w.textContent = `La carga previa (${fmtDate(prev.fecha)}) tiene ${nf(prev.odometro)} km y estás ingresando ${nf(odo)} km. Tocá Guardar de nuevo para confirmar.`; w.hidden = false;
+    return;
   }
   const time = editing && datePart(editing.fecha) === fecha ? (String(editing.fecha).slice(11) || '12:00:00') : nowTime();
   const doc = {
@@ -1483,27 +1527,35 @@ async function submitRefuel(e) {
     volumen: vol, costoTotal: costo, precioUnitario: pu, lleno: state.ui.lleno, estacion: $('#fl-estacion').value.trim(), notas: editing?.notas || '', origen: editing?.origen || 'manual'
   };
   await store.save('refuels', doc);
+  state.ui.fuel = f;   // el listado de Cargas muestra el combustible recién cargado
+  if (modal && modal.el === el) closeModal(true);
   toast(editing ? 'Carga actualizada.' : 'Carga registrada.', 'ok');
-  state.ui.flOpen = false; resetRefuelForm(); renderAll();
+  renderAll();
+}
+
+/* ---- Acción rápida: hoja con las dos altas más frecuentes ---- */
+function openQuickAdd() {
+  openModal({ title: 'Registrar', focus: '.quick-btn', body: `<div class="quick">
+    <button class="quick-btn" type="button" data-action="quick-refuel"><span class="quick-ico" style="color:var(--gnc)">${icon('fuel', 28)}</span><span><b>Carga de combustible</b><small>Nafta o GNC</small></span></button>
+    <button class="quick-btn" type="button" data-action="quick-expense"><span class="quick-ico" style="color:var(--violet)">${icon('wrench', 28)}</span><span><b>Gasto</b><small>Service, peaje, lavadero, trámites…</small></span></button>
+  </div>` });
 }
 
 /* ---- Gastos: modal de alta/edición ---- */
 function openExpenseModal(existing) {
   const it = existing || {};
   const tipos = [...new Set(state.expenses.map(e => e.tipo).filter(Boolean))].sort();
-  const el = openModal({ title: existing ? 'Editar gasto' : 'Nuevo gasto', body: `
+  const el = openModal({ title: existing ? 'Editar gasto' : 'Nuevo gasto', focus: '#gx-monto', body: `
     <form id="gx-form" class="sheet-body" novalidate autocomplete="off">
+      <div class="field"><label for="gx-monto">Monto ($ ARS)</label><input id="gx-monto" class="big num" inputmode="decimal" enterkeyhint="next" value="${it.monto !== undefined ? esc(String(it.monto).replace('.', ',')) : ''}" required></div>
+      <div class="field"><label for="gx-cat">Categoría</label><select id="gx-cat">${CAT_KEYS.map(k => `<option value="${k}" ${(it.categoria || 'PREVENTIVO') === k ? 'selected' : ''}>${esc(CATS[k].label)}</option>`).join('')}</select></div>
+      <div class="field"><label for="gx-tipo">Tipo</label><input id="gx-tipo" list="gx-tipos" maxlength="60" enterkeyhint="done" placeholder="Cambio de aceite, Lavadero, VTV…" value="${esc(it.tipo || '')}"><datalist id="gx-tipos">${tipos.map(t => `<option value="${esc(t)}">`).join('')}</datalist></div>
       <div class="grid-2">
         <div class="field"><label for="gx-fecha">Fecha</label><input id="gx-fecha" type="date" value="${esc(datePart(it.fecha) || todayISO())}" required></div>
-        <div class="field"><label for="gx-monto">Monto ($ ARS)</label><input id="gx-monto" class="big num" inputmode="decimal" value="${it.monto !== undefined ? esc(String(it.monto).replace('.', ',')) : ''}" required></div>
-      </div>
-      <div class="field"><label for="gx-cat">Categoría</label><select id="gx-cat">${CAT_KEYS.map(k => `<option value="${k}" ${(it.categoria || 'PREVENTIVO') === k ? 'selected' : ''}>${esc(CATS[k].label)}</option>`).join('')}</select></div>
-      <div class="field"><label for="gx-tipo">Tipo</label><input id="gx-tipo" list="gx-tipos" maxlength="60" placeholder="Cambio de aceite, Lavadero, VTV…" value="${esc(it.tipo || '')}"><datalist id="gx-tipos">${tipos.map(t => `<option value="${esc(t)}">`).join('')}</datalist></div>
-      <div class="field"><label for="gx-desc">Descripción (opcional)</label><input id="gx-desc" maxlength="200" value="${esc(it.descripcion || '')}"></div>
-      <div class="grid-2">
         <div class="field"><label for="gx-odo">Odómetro (opcional)</label><input id="gx-odo" class="num" inputmode="numeric" value="${Number.isFinite(it.odometro) ? it.odometro : ''}"></div>
-        <div class="field"><label for="gx-local">Local (opcional)</label><input id="gx-local" maxlength="80" value="${esc(it.local || '')}"></div>
       </div>
+      <div class="field"><label for="gx-desc">Descripción (opcional)</label><input id="gx-desc" maxlength="200" value="${esc(it.descripcion || '')}"></div>
+      <div class="field"><label for="gx-local">Local (opcional)</label><input id="gx-local" maxlength="80" value="${esc(it.local || '')}"></div>
       <div id="gx-resets" class="stack">
         <label class="check"><input type="checkbox" id="gx-r-oil"> Reinicia contador de aceite y filtros</label>
         <label class="check"><input type="checkbox" id="gx-r-plugs"> Reinicia contador de bujías y cables</label>
@@ -1511,6 +1563,7 @@ function openExpenseModal(existing) {
       <p id="gx-error" class="form-error" role="alert" hidden></p>
       <div class="sheet-foot"><button class="btn btn-ghost" type="button" data-modal-close>Cancelar</button><button class="btn btn-primary" type="submit">${existing ? 'Guardar cambios' : 'Guardar gasto'}</button></div>
     </form>` });
+  enterFlow($('#gx-form', el), ['gx-tipo'], () => $('#gx-monto', el).value.trim() !== '' && parseNum($('#gx-monto', el).value) >= 0);
   const toggleResets = () => { $('#gx-resets', el).hidden = $('#gx-cat', el).value !== 'PREVENTIVO'; };
   $('#gx-cat', el).addEventListener('change', toggleResets); toggleResets();
   $('#gx-form', el).addEventListener('submit', async ev => {
@@ -1615,20 +1668,23 @@ function showPlanPreview(plan) {
 const actions = {
   login: () => login(),
   logout: () => logout(),
-  'set-fuel': el => {
-    state.ui.fuel = el.dataset.fuel; state.ui.fuelLimit = 15;
-    if (state.ui.editRefuel) resetRefuelForm();
-    else { const pu = $('#fl-pu'); if (pu.classList.contains('auto')) { pu.value = ''; pu.classList.remove('auto'); } state.ui.flPre = null; updateFormState(); }
-    renderAll();
+  'set-fuel': el => { state.ui.fuel = el.dataset.fuel; state.ui.fuelLimit = 15; renderAll(); },   // filtro del listado de Cargas
+  'fl-fuel': el => {   // combustible dentro del formulario de carga
+    const f = el.dataset.fuel; if (f === state.ui.flFuel) return;
+    state.ui.flFuel = f; state.ui.flPre = null;
+    const pu = $('#fl-pu');
+    if (pu.classList.contains('auto')) { pu.value = ''; pu.classList.remove('auto'); state.ui.flOrder = state.ui.flOrder.filter(k => k !== 'pu'); }
+    syncRefuelFuel();
   },
   'toggle-lleno': () => { state.ui.lleno = !state.ui.lleno; $('#fl-lleno').setAttribute('aria-checked', String(state.ui.lleno)); },
-  'edit-refuel': el => { const r = state.refuels.find(x => x.id === el.dataset.id); if (r) fillRefuelForm(r); },
-  'new-refuel': () => { resetRefuelForm(); state.ui.flOpen = true; renderAll(); $('#fl-odo').focus(); },
-  'refuel-cancel': () => { state.ui.flOpen = false; resetRefuelForm(); renderAll(); },
+  'edit-refuel': el => { const r = state.refuels.find(x => x.id === el.dataset.id); if (r) openRefuelModal(r); },
+  'new-refuel': () => openRefuelModal(null),
+  'quick-add': () => openQuickAdd(),
+  'quick-refuel': () => openRefuelModal(null),
+  'quick-expense': () => openExpenseModal(null),
   'del-refuel': async el => {
     const r = state.refuels.find(x => x.id === el.dataset.id); if (!r) return;
     if (await confirmDialog({ title: 'Eliminar carga', message: `Se eliminará la carga del ${fmtDate(r.fecha)} (${nf(r.odometro)} km, ${money(r.costoTotal)}).` })) {
-      if (state.ui.editRefuel === r.id) { state.ui.flOpen = false; resetRefuelForm(); }
       await store.remove('refuels', r.id); toast('Carga eliminada.');
     }
   },
@@ -1668,8 +1724,6 @@ function bindEvents() {
       else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
     }
   });
-  $('#fl-form').addEventListener('submit', submitRefuel);
-  Object.keys(FL).forEach(k => $(FL[k]).addEventListener('input', () => recalcRefuel(k)));
   $('#file-import').addEventListener('change', e => handleImportFile(e.target.files[0]));
   window.addEventListener('hashchange', route);
   window.addEventListener('online', () => { state.online = true; scheduleRender(); });
@@ -1692,12 +1746,12 @@ function route() {
 
 function show(screen) {
   ['boot', 'config', 'login', 'app'].forEach(n => { $('#screen-' + n).hidden = n !== screen; });
+  $('#fab').hidden = screen !== 'app';   // el botón de registro solo existe con la sesión abierta
 }
 
 function enterApp(user) {
   state.user = user;
   $('#foot-user').textContent = DEMO ? 'Modo demo local' : `Sesión: ${user.email || user.displayName || user.uid}`;
-  resetRefuelForm();
   show('app');
   route();
   startSession();
