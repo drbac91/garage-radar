@@ -493,7 +493,8 @@ function friendlyError(e) {
   if (code.includes('permission-denied')) return 'Sin permiso: esta cuenta no coincide con el UID autorizado en las reglas de Firestore.';
   if (code.includes('unavailable') || code.includes('network')) return 'Sin conexión con Firebase. Los cambios se enviarán al reconectar.';
   if (code.includes('resource-exhausted') || code.includes('quota')) return 'Se agotó la cuota diaria de Firestore. Probá de nuevo más tarde.';
-  if (code.includes('popup-blocked')) return 'El navegador bloqueó la ventana de Google.';
+  if (code.includes('popup-blocked')) return 'El navegador bloqueó la ventana de Google. Permití las ventanas emergentes para este sitio y volvé a tocar Ingresar.';
+  if (code.includes('operation-not-supported')) return 'Este navegador no permite el acceso con Google. Abrí la app en Safari o Chrome (no en el navegador interno de otra app).';
   if (code.includes('unauthorized-domain')) return 'Este dominio no está autorizado en Firebase Auth (Authentication → Settings → Authorized domains).';
   if (code.includes('operation-not-allowed')) return 'El acceso con Google no está habilitado en Firebase Auth.';
   return e?.message || 'Ocurrió un error inesperado.';
@@ -544,9 +545,8 @@ async function login() {
     await authM.signInWithPopup(auth, provider);
   } catch (e) {
     const c = String(e?.code || '');
-    if (c.includes('popup-blocked') || c.includes('operation-not-supported')) {
-      try { await authM.signInWithRedirect(auth, provider); return; } catch (e2) { e = e2; }
-    }
+    // Sin fallback a redirect: con authDomain en otro dominio (firebaseapp.com) los navegadores móviles
+    // particionan el almacenamiento y el redirect falla con "missing initial state".
     if (c.includes('popup-closed-by-user') || c.includes('cancelled-popup-request')) return;
     const el = $('#login-error'); el.textContent = friendlyError(e); el.hidden = false;
   }
@@ -1476,7 +1476,6 @@ async function boot() {
   try { await initFirebase(); }
   catch (e) { show('login'); const el = $('#login-error'); el.textContent = 'No se pudo cargar Firebase. Revisá tu conexión e intentá de nuevo.'; el.hidden = false; $('#btn-login').disabled = true; return; }
 
-  fb.authM.getRedirectResult(fb.auth).catch(e => { const el = $('#login-error'); el.textContent = friendlyError(e); el.hidden = false; });
   fb.authM.onAuthStateChanged(fb.auth, user => {
     if (user) { store = createFirestoreStore(user.uid); enterApp(user); }
     else { stopSession(); state.user = null; store = null; show('login'); }
