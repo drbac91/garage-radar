@@ -52,7 +52,7 @@ En **Authentication → Configuración → Dominios autorizados** agregá `<tu-u
 2. Elegí el CSV exportado desde Drivvo.
 3. Revisá la vista previa (cantidad por sección, rango de fechas, duplicados y filas rechazadas) y confirmá.
 
-Reimportar el mismo archivo no duplica nada: los registros importados tienen IDs deterministas. Al terminar, la app deriva el último cambio de aceite y de bujías/cables desde el historial (editables en **Configurar**). La oblea de GNC, la prueba hidráulica, la VTV y el seguro los cargás vos en **Configurar**.
+Reimportar el mismo archivo no duplica nada: los registros importados tienen IDs deterministas. Al terminar, la app deriva desde el historial el último service de cada ítem periódico (aceite, bujías, distribución, filtros, frenos, refrigerante, rotación, GNC); editables en **Configurar**. La oblea de GNC, la prueba hidráulica, la VTV y el seguro los cargás vos en **Configurar**.
 
 Mapeo aplicado:
 
@@ -81,7 +81,9 @@ En la carga de combustible el combustible viene preseleccionado con el de la úl
 - **Rendimiento**: entre dos cargas "tanque lleno" consecutivas del mismo combustible, km recorridos ÷ volumen de las cargas posteriores al primer lleno (parciales incluidas) hasta el segundo lleno. El histórico es suma de km ÷ suma de volúmenes. Se descartan tramos con km ≤ 0 o fuera de 3–30 km por unidad.
 - **Costo por km**: (combustible + gastos) ÷ (odómetro máximo − mínimo).
 - **Mix de uso (estimado)**: los km entre dos cargas se atribuyen al combustible de la carga más reciente del par.
-- **Vencimientos**: fechas en rojo si vencieron, amarillo si faltan 30 días o menos; kilometraje en rojo si restan 0 km o menos, amarillo si restan 1.000 km o menos.
+- **Vencimientos**: fechas (VTV, oblea, prueba hidráulica, seguro) en rojo si vencieron, amarillo si faltan 30 días o menos. Los services periódicos vencen por km, por tiempo o lo que ocurra primero, y la fila muestra el peor de los dos: rojo al llegar a 0, amarillo cuando restan 30 días o el mayor entre 1.000 km y el 10 % del intervalo.
+- **Intervalos precargados** (VW Voyage 1.6, nafta/GNC): aceite y filtro 10.000 km / 12 meses; bujías 20.000 km; distribución + tensor + bomba de agua 60.000 km / 5 años; filtro de aire 15.000 km / 12 meses; filtro de combustible 20.000 km / 2 años; líquido de frenos 2 años; refrigerante 2 años; rotación y alineación 10.000 km; equipo de GNC 15.000 km / 12 meses. Son recomendaciones habituales de taller, no el plan oficial de VW: ajustalos con la libreta de service de tu unidad (se definen en `SERVICE_ITEMS`).
+- Al registrar un gasto preventivo, los contadores que ese tipo reinicia se tildan solos (se pueden destildar).
 
 ## Respaldo
 

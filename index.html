@@ -494,9 +494,30 @@ const DATE_ALERTS = [
   { key: 'pruebaHidraulica', label: 'Prueba hidráulica del cilindro', sub: 'Cada 5 años', icon: 'cylinder' },
   { key: 'seguro', label: 'Seguro', sub: 'Vencimiento de la póliza', icon: 'shield' }
 ];
-const KM_ALERTS = [
-  { key: 'ultimoAceiteKm', label: 'Aceite y filtros', interval: 10000, icon: 'drop', sub: 'Cada 10.000 km' },
-  { key: 'ultimoBujiasKm', label: 'Bujías y cables', interval: 20000, icon: 'bolt', sub: 'Cada 20.000 km · crítico para GNC' }
+// Services periódicos: vencen por km, por tiempo, o lo que ocurra primero. Cada uno guarda en Configurar el
+// odómetro (key) y la fecha (fkey) del último service. `match` reconoce el tipo de gasto que lo reinicia.
+// Intervalos recomendados para un VW Voyage 1.6 (EA111, nafta/GNC) según prácticas habituales de taller;
+// no son el plan oficial de VW: ajustalos con la libreta de service de tu unidad.
+const hasAny = (e, re) => re.test(norm(e.tipo));
+const SERVICE_ITEMS = [
+  { key: 'ultimoAceiteKm', fkey: 'ultimoAceiteFecha', label: 'Aceite y filtro de aceite', interval: 10000, months: 12, icon: 'drop', sub: 'Cada 10.000 km o 12 meses',
+    match: e => { const t = norm(e.tipo); return t.includes('aceite') && t !== 'filtro de aceite' && !/caja|transmision|diferencial|direccion|hidraulic|frenos/.test(t); } },
+  { key: 'ultimoBujiasKm', fkey: 'ultimoBujiasFecha', label: 'Bujías y cables', interval: 20000, icon: 'bolt', sub: 'Cada 20.000 km · crítico para GNC',
+    match: e => hasAny(e, /bujia/) },
+  { key: 'ultimoDistribucionKm', fkey: 'ultimoDistribucionFecha', label: 'Correa de distribución, tensor y bomba de agua', interval: 60000, months: 60, icon: 'gear', sub: 'Cada 60.000 km o 5 años · si se corta, destruye el motor',
+    match: e => hasAny(e, /distribucion|correa dentada/) },
+  { key: 'ultimoFiltroAireKm', fkey: 'ultimoFiltroAireFecha', label: 'Filtro de aire', interval: 15000, months: 12, icon: 'clipboard', sub: 'Cada 15.000 km o 12 meses',
+    match: e => hasAny(e, /filtro de aire/) && !hasAny(e, /cabina|habitaculo|polen/) },
+  { key: 'ultimoFiltroCombKm', fkey: 'ultimoFiltroCombFecha', label: 'Filtro de combustible', interval: 20000, months: 24, icon: 'fuel', sub: 'Cada 20.000 km o 2 años',
+    match: e => hasAny(e, /filtro de (combustible|nafta)/) },
+  { key: 'ultimoFrenosKm', fkey: 'ultimoFrenosFecha', label: 'Líquido de frenos', months: 24, icon: 'shield', sub: 'Cada 2 años (absorbe humedad)',
+    match: e => hasAny(e, /liquido de frenos/) },
+  { key: 'ultimoRefrigeranteKm', fkey: 'ultimoRefrigeranteFecha', label: 'Líquido refrigerante', months: 24, icon: 'drop', sub: 'Cada 2 años',
+    match: e => hasAny(e, /refrigerante/) },
+  { key: 'ultimoNeumaticosKm', fkey: 'ultimoNeumaticosFecha', label: 'Rotación y alineación', interval: 10000, icon: 'wrench', sub: 'Cada 10.000 km',
+    match: e => hasAny(e, /rotar|rotacion|alineacion|balanceo/) },
+  { key: 'ultimoGncKm', fkey: 'ultimoGncFecha', label: 'Equipo de GNC (filtros y revisión)', interval: 15000, months: 12, icon: 'flame', sub: 'Cada 15.000 km o 12 meses',
+    match: e => hasAny(e, /gnc/) && !hasAny(e, /oblea|hidraulic|cilindro/) }
 ];
 const MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 
@@ -521,6 +542,12 @@ const daysUntil = iso => {
   const [y, m, d] = datePart(iso).split('-').map(Number);
   const n = new Date();
   return Math.round((Date.UTC(y, m - 1, d) - Date.UTC(n.getFullYear(), n.getMonth(), n.getDate())) / 86400000);
+};
+
+// Suma meses a una fecha ISO y devuelve YYYY-MM-DD.
+const addMonths = (iso, m) => {
+  const [y, mo, d] = datePart(iso).split('-').map(Number);
+  return new Date(Date.UTC(y, mo - 1 + m, d)).toISOString().slice(0, 10);
 };
 
 // Número ingresado por el usuario: acepta "1.234,56", "13,48" o "13.48".
@@ -832,12 +859,21 @@ function computeAlerts(D) {
     const st = days <= 0 ? 'red' : days <= 30 ? 'yellow' : 'green';
     out.push({ ...a, kind: 'date', st, days, iso });
   }
-  for (const a of KM_ALERTS) {
+  for (const a of SERVICE_ITEMS) {
+    // Estado por km y por tiempo (lo que ocurra primero); se muestra el peor de los dos.
+    const parts = [];
     const base = s[a.key];
-    if (!Number.isFinite(base) || D.kmNow === null) { out.push({ ...a, kind: 'km', st: 'none' }); continue; }
-    const target = base + a.interval, rem = target - D.kmNow;
-    const st = rem <= 0 ? 'red' : rem <= 1000 ? 'yellow' : 'green';
-    out.push({ ...a, kind: 'km', st, rem, target });
+    if (a.interval && Number.isFinite(base) && D.kmNow !== null) {
+      const rem = base + a.interval - D.kmNow, warn = Math.max(1000, a.interval * 0.1);
+      parts.push({ by: 'km', rem, target: base + a.interval, st: rem <= 0 ? 'red' : rem <= warn ? 'yellow' : 'green' });
+    }
+    if (a.months && isValidDate(s[a.fkey])) {
+      const iso = addMonths(s[a.fkey], a.months), days = daysUntil(iso);
+      parts.push({ by: 'date', days, iso, st: days <= 0 ? 'red' : days <= 30 ? 'yellow' : 'green' });
+    }
+    if (!parts.length) { out.push({ ...a, kind: 'service', st: 'none' }); continue; }
+    const main = parts.reduce((w, p) => rank[p.st] < rank[w.st] ? p : w);
+    out.push({ ...a, kind: 'service', st: main.st, main, kmPart: parts.find(p => p.by === 'km'), datePart: parts.find(p => p.by === 'date') });
   }
   return out.sort((x, y) => rank[x.st] - rank[y.st]);   // sort estable
 }
@@ -896,14 +932,9 @@ const PREVENTIVE_SERVICES = new Set(['cambio de aceite', 'filtro de aceite', 'fi
   'liquido de embrague', 'limpia parabrisas', 'inspeccion', 'control de perdidas gnc']);
 const TRAMITE_EXPENSES = new Set(['vtv', 'seguro automotor', 'registro', 'impuestos']);
 const REPAIR_EXPENSES = new Set(['autopartes', 'mano de obra']);
-// Reconoce variantes de nombre ("Aceite y filtro", "Service de aceite") para derivar los odómetros base.
-// Un "filtro de aceite" suelto o un aceite de caja/diferencial/dirección no reinician el contador del motor.
-const isOilService = e => {
-  const t = norm(e.tipo);
-  return t.includes('aceite') && t !== 'filtro de aceite' && !/caja|transmision|diferencial|direccion|hidraulic|frenos/.test(t);
-};
-const isPlugsService = e => norm(e.tipo).includes('bujia');
-const serviceCategory = t => PREVENTIVE_SERVICES.has(norm(t)) || isOilService({ tipo: t }) || isPlugsService({ tipo: t }) ? 'PREVENTIVO' : 'REPARACION';
+// Los matchers de SERVICE_ITEMS reconocen variantes de nombre ("Aceite y filtro", "Service de aceite") para
+// categorizar el service como preventivo y derivar los contadores.
+const serviceCategory = t => PREVENTIVE_SERVICES.has(norm(t)) || SERVICE_ITEMS.some(a => a.match({ tipo: t })) ? 'PREVENTIVO' : 'REPARACION';
 const expenseCategory = t => TRAMITE_EXPENSES.has(norm(t)) ? 'TRAMITES' : REPAIR_EXPENSES.has(norm(t)) ? 'REPARACION' : 'OTROS';
 
 function checkRefuel(d) {
@@ -1034,13 +1065,16 @@ async function executePlan(plan) {
       if (!cur.vehiculo || !cur.vehiculo.nombre) patch.vehiculo = plan.settings.vehiculo;
     } else Object.assign(patch, plan.settings);
   }
-  // Odómetros base de aceite y bujías: último service registrado (se pueden editar en Configurar).
-  const all = [...state.expenses, ...plan.newExpenses];
-  const maxOdo = fn => all.filter(fn).reduce((m, e) => Number.isFinite(e.odometro) ? Math.max(m, e.odometro) : m, 0) || null;
-  const oil = maxOdo(isOilService);
-  const plugs = maxOdo(isPlugsService);
-  if (oil && oil > (state.settings.ultimoAceiteKm || 0)) patch.ultimoAceiteKm = oil;
-  if (plugs && plugs > (state.settings.ultimoBujiasKm || 0)) patch.ultimoBujiasKm = plugs;
+  // Contadores de cada service periódico: último registro preventivo (se pueden editar en Configurar).
+  // Solo avanzan: nunca pisan un valor más reciente ya guardado.
+  const all = [...state.expenses, ...plan.newExpenses].filter(e => e.categoria === 'PREVENTIVO');
+  for (const a of SERVICE_ITEMS) {
+    const hits = all.filter(e => a.match(e));
+    const odo = a.interval ? hits.reduce((m, e) => Number.isFinite(e.odometro) ? Math.max(m, e.odometro) : m, 0) : 0;
+    const fecha = hits.reduce((m, e) => isValidDate(e.fecha) && datePart(e.fecha) > m ? datePart(e.fecha) : m, '');
+    if (odo && odo > (state.settings[a.key] || 0)) patch[a.key] = odo;
+    if (a.months && fecha && fecha > datePart(state.settings[a.fkey])) patch[a.fkey] = fecha;
+  }
   if (Object.keys(patch).length) await store.saveSettings(patch);
   return { inserted: plan.newRefuels.length + plan.newExpenses.length, dupes: plan.dupes, rejected: plan.rejected.length };
 }
@@ -1095,14 +1129,17 @@ function alertRowHTML(a) {
   const unitStr = { red: 'VENCIDA', yellow: 'PRÓXIMA', green: 'AL DÍA', none: 'SIN CONFIGURAR' };
   let sub = esc(a.sub), big = '—', badge = unitStr.none;
   if (a.st !== 'none') {
-    badge = a.kind === 'km' ? { red: 'ATRASADO', yellow: 'PRÓXIMO', green: 'AL DÍA' }[a.st] : unitStr[a.st];
+    badge = a.kind === 'date' ? unitStr[a.st] : { red: 'ATRASADO', yellow: 'PRÓXIMO', green: 'AL DÍA' }[a.st];
+    const whenTxt = d => d > 0 ? `en ${nf(d)} días` : d === 0 ? 'vence hoy' : `venció hace ${nf(-d)} días`;
     if (a.kind === 'date') {
-      const when = a.days > 0 ? `en ${nf(a.days)} días` : a.days === 0 ? 'vence hoy' : `venció hace ${nf(-a.days)} días`;
-      sub = `Vence ${fmtDate(a.iso)} · ${when}`;
+      sub = `Vence ${fmtDate(a.iso)} · ${whenTxt(a.days)}`;
       big = `${nf(a.days)}<small>días</small>`;
     } else {
-      sub = `${a.sub} · próximo a los ${nf(a.target)} km`;
-      big = `${nf(a.rem)}<small>km</small>`;
+      const bits = [];
+      if (a.kmPart) bits.push(`a los ${nf(a.kmPart.target)} km`);
+      if (a.datePart) bits.push(`${fmtDate(a.datePart.iso)} · ${whenTxt(a.datePart.days)}`);
+      sub = `${a.sub} · próximo ${bits.join(' o ')}`;
+      big = a.main.by === 'km' ? `${nf(a.main.rem)}<small>km</small>` : `${nf(a.main.days)}<small>días</small>`;
     }
   }
   const tag = a.st === 'none' ? 'button' : 'div';
@@ -1564,8 +1601,7 @@ function openExpenseModal(existing) {
       <div class="field"><label for="gx-desc">Descripción (opcional)</label><input id="gx-desc" maxlength="200" value="${esc(it.descripcion || '')}"></div>
       <div class="field"><label for="gx-local">Local (opcional)</label><input id="gx-local" maxlength="80" value="${esc(it.local || '')}"></div>
       <div id="gx-resets" class="stack">
-        <label class="check"><input type="checkbox" id="gx-r-oil"> Reinicia contador de aceite y filtros</label>
-        <label class="check"><input type="checkbox" id="gx-r-plugs"> Reinicia contador de bujías y cables</label>
+        ${SERVICE_ITEMS.map((a, i) => `<label class="check"><input type="checkbox" id="gx-r-${i}"> Reinicia contador de ${esc(a.label.toLowerCase())}</label>`).join('')}
       </div>
       <p id="gx-error" class="form-error" role="alert" hidden></p>
       <div class="sheet-foot"><button class="btn btn-ghost" type="button" data-modal-close>Cancelar</button><button class="btn btn-primary" type="submit">${existing ? 'Guardar cambios' : 'Guardar gasto'}</button></div>
@@ -1573,16 +1609,18 @@ function openExpenseModal(existing) {
   enterFlow($('#gx-form', el), ['gx-tipo'], () => $('#gx-monto', el).value.trim() !== '' && parseNum($('#gx-monto', el).value) >= 0);
   const toggleResets = () => { $('#gx-resets', el).hidden = $('#gx-cat', el).value !== 'PREVENTIVO'; };
   $('#gx-cat', el).addEventListener('change', toggleResets); toggleResets();
+  // Al escribir el tipo se tildan solos los contadores que ese service reinicia (se puede destildar).
+  $('#gx-tipo', el).addEventListener('input', () => SERVICE_ITEMS.forEach((a, i) => { $('#gx-r-' + i, el).checked = a.match({ tipo: $('#gx-tipo', el).value }); }));
   $('#gx-form', el).addEventListener('submit', async ev => {
     ev.preventDefault();
     const err = m => { const p = $('#gx-error', el); p.textContent = m; p.hidden = !m; return false; };
     const fecha = $('#gx-fecha', el).value, monto = parseNum($('#gx-monto', el).value), odoRaw = $('#gx-odo', el).value.trim();
     const odo = odoRaw ? parseKm(odoRaw) : null, cat = $('#gx-cat', el).value;
-    const rOil = cat === 'PREVENTIVO' && $('#gx-r-oil', el).checked, rPlugs = cat === 'PREVENTIVO' && $('#gx-r-plugs', el).checked;
+    const resets = cat === 'PREVENTIVO' ? SERVICE_ITEMS.filter((a, i) => $('#gx-r-' + i, el).checked) : [];
     if (!isValidDate(fecha)) return err('Ingresá una fecha válida.');
     if (!Number.isFinite(monto) || monto < 0) return err('Ingresá un monto válido.');
     if (odoRaw && !(odo > 0)) return err('El odómetro debe ser un número mayor a 0.');
-    if ((rOil || rPlugs) && !odo) return err('Para reiniciar un contador ingresá el odómetro del service.');
+    if (resets.some(a => a.interval) && !odo) return err('Para reiniciar un contador por km ingresá el odómetro del service.');
     const time = existing && datePart(existing.fecha) === fecha ? (String(existing.fecha).slice(11) || '12:00:00') : nowTime();
     await store.save('expenses', {
       ...(existing ? { id: existing.id } : {}), fecha: `${fecha}T${time}`, odometro: odo, categoria: cat,
@@ -1590,8 +1628,7 @@ function openExpenseModal(existing) {
       grupoId: existing?.grupoId || null, origen: existing?.origen || 'manual'
     });
     const patch = {};
-    if (rOil) patch.ultimoAceiteKm = odo;
-    if (rPlugs) patch.ultimoBujiasKm = odo;
+    for (const a of resets) { if (a.interval) patch[a.key] = odo; patch[a.fkey] = fecha; }
     if (Object.keys(patch).length) await store.saveSettings(patch);
     closeModal(true); toast(existing ? 'Gasto actualizado.' : 'Gasto registrado.', 'ok');
   });
@@ -1612,10 +1649,11 @@ function openSettingsModal() {
       <div class="grid-2">
         ${DATE_ALERTS.map(a => `<div class="field"><label for="st-${a.key}">${esc(a.label)}</label><input id="st-${a.key}" type="date" value="${esc(datePart(ven[a.key]))}"></div>`).join('')}
       </div>
-      <div class="tile-label" style="margin-top:6px">Último service (odómetro)</div>
-      <div class="grid-2">
-        ${KM_ALERTS.map(a => `<div class="field"><label for="st-${a.key}">${esc(a.label)}</label><input id="st-${a.key}" class="num" inputmode="numeric" value="${Number.isFinite(s[a.key]) ? s[a.key] : ''}"></div>`).join('')}
-      </div>
+      <div class="tile-label" style="margin-top:6px">Último service de cada ítem (odómetro y fecha)</div>
+      ${SERVICE_ITEMS.map(a => `<div class="field"><label>${esc(a.label)} <small>· ${esc(a.sub)}</small></label><div class="grid-2">
+        ${a.interval ? `<input id="st-${a.key}" class="num" inputmode="numeric" placeholder="Odómetro (km)" aria-label="${esc(a.label)}: odómetro" value="${Number.isFinite(s[a.key]) ? s[a.key] : ''}">` : '<span></span>'}
+        ${a.months ? `<input id="st-${a.fkey}" type="date" aria-label="${esc(a.label)}: fecha" value="${esc(datePart(s[a.fkey]))}">` : '<span></span>'}
+      </div></div>`).join('')}
       <p class="help">Los contadores se reinician automáticamente al registrar un gasto preventivo con la casilla correspondiente.</p>
       <p id="st-error" class="form-error" role="alert" hidden></p>
       <div class="sheet-foot"><button class="btn btn-ghost" type="button" data-modal-close>Cancelar</button><button class="btn btn-primary" type="submit">Guardar</button></div>
@@ -1632,10 +1670,17 @@ function openSettingsModal() {
       if (val && !isValidDate(val)) return err(`Fecha inválida en ${a.label}.`);
       patch.vencimientos[a.key] = val || '';
     }
-    for (const a of KM_ALERTS) {
-      const raw = $('#st-' + a.key, el).value.trim(), n = parseKm(raw);
-      if (raw && !(n >= 0)) return err(`Odómetro inválido en ${a.label}.`);
-      patch[a.key] = raw ? n : null;
+    for (const a of SERVICE_ITEMS) {
+      if (a.interval) {
+        const raw = $('#st-' + a.key, el).value.trim(), n = parseKm(raw);
+        if (raw && !(n >= 0)) return err(`Odómetro inválido en ${a.label}.`);
+        patch[a.key] = raw ? n : null;
+      }
+      if (a.months) {
+        const f = $('#st-' + a.fkey, el).value;
+        if (f && !isValidDate(f)) return err(`Fecha inválida en ${a.label}.`);
+        patch[a.fkey] = f || null;
+      }
     }
     await store.saveSettings(patch); closeModal(true); toast('Configuración guardada.', 'ok');
   });
