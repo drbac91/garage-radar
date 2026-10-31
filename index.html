@@ -896,7 +896,14 @@ const PREVENTIVE_SERVICES = new Set(['cambio de aceite', 'filtro de aceite', 'fi
   'liquido de embrague', 'limpia parabrisas', 'inspeccion', 'control de perdidas gnc']);
 const TRAMITE_EXPENSES = new Set(['vtv', 'seguro automotor', 'registro', 'impuestos']);
 const REPAIR_EXPENSES = new Set(['autopartes', 'mano de obra']);
-const serviceCategory = t => PREVENTIVE_SERVICES.has(norm(t)) ? 'PREVENTIVO' : 'REPARACION';
+// Reconoce variantes de nombre ("Aceite y filtro", "Service de aceite") para derivar los odómetros base.
+// Un "filtro de aceite" suelto o un aceite de caja/diferencial/dirección no reinician el contador del motor.
+const isOilService = e => {
+  const t = norm(e.tipo);
+  return t.includes('aceite') && t !== 'filtro de aceite' && !/caja|transmision|diferencial|direccion|hidraulic|frenos/.test(t);
+};
+const isPlugsService = e => norm(e.tipo).includes('bujia');
+const serviceCategory = t => PREVENTIVE_SERVICES.has(norm(t)) || isOilService({ tipo: t }) || isPlugsService({ tipo: t }) ? 'PREVENTIVO' : 'REPARACION';
 const expenseCategory = t => TRAMITE_EXPENSES.has(norm(t)) ? 'TRAMITES' : REPAIR_EXPENSES.has(norm(t)) ? 'REPARACION' : 'OTROS';
 
 function checkRefuel(d) {
@@ -1030,8 +1037,8 @@ async function executePlan(plan) {
   // Odómetros base de aceite y bujías: último service registrado (se pueden editar en Configurar).
   const all = [...state.expenses, ...plan.newExpenses];
   const maxOdo = fn => all.filter(fn).reduce((m, e) => Number.isFinite(e.odometro) ? Math.max(m, e.odometro) : m, 0) || null;
-  const oil = maxOdo(e => norm(e.tipo) === 'cambio de aceite');
-  const plugs = maxOdo(e => ['bujias', 'cable de bujias'].includes(norm(e.tipo)));
+  const oil = maxOdo(isOilService);
+  const plugs = maxOdo(isPlugsService);
   if (oil && oil > (state.settings.ultimoAceiteKm || 0)) patch.ultimoAceiteKm = oil;
   if (plugs && plugs > (state.settings.ultimoBujiasKm || 0)) patch.ultimoBujiasKm = plugs;
   if (Object.keys(patch).length) await store.saveSettings(patch);
