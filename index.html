@@ -517,7 +517,7 @@ const SERVICE_ITEMS = [
   { key: 'ultimoNeumaticosKm', fkey: 'ultimoNeumaticosFecha', label: 'Rotación y alineación', interval: 10000, icon: 'wrench', sub: 'Cada 10.000 km',
     match: e => hasAny(e, /rotar|rotacion|alineacion|balanceo/) },
   { key: 'ultimoGncKm', fkey: 'ultimoGncFecha', label: 'Equipo de GNC (filtros y revisión)', interval: 15000, months: 12, icon: 'flame', sub: 'Cada 15.000 km o 12 meses',
-    match: e => hasAny(e, /gnc/) && !hasAny(e, /oblea|hidraulic|cilindro/) }
+    match: e => hasAny(e, /perdidas.*gnc|gnc.*perdidas|filtro.*gnc|gnc.*filtro|revision.*gnc|gnc.*revision|service.*gnc|gnc.*service/) }
 ];
 const MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 
@@ -1053,6 +1053,20 @@ function finishPlan(plan) {
   return plan;
 }
 
+// Contadores de cada service periódico a partir del historial de gastos: último odómetro y última fecha por ítem.
+// Solo avanzan: nunca pisan un valor más reciente ya guardado en `cur`. Se apoya en el tipo, no en la categoría guardada.
+function serviceCounters(expenses, cur) {
+  const patch = {};
+  for (const a of SERVICE_ITEMS) {
+    const hits = expenses.filter(e => a.match(e));
+    const odo = a.interval ? hits.reduce((m, e) => Number.isFinite(e.odometro) ? Math.max(m, e.odometro) : m, 0) : 0;
+    const fecha = hits.reduce((m, e) => isValidDate(e.fecha) && datePart(e.fecha) > m ? datePart(e.fecha) : m, '');
+    if (odo && odo > (cur[a.key] || 0)) patch[a.key] = odo;
+    if (a.months && fecha && fecha > datePart(cur[a.fkey])) patch[a.fkey] = fecha;
+  }
+  return patch;
+}
+
 // Ejecuta el plan: solo escribe los registros nuevos (los duplicados se omiten).
 async function executePlan(plan) {
   if (!DEMO && !navigator.onLine) throw new Error('Sin conexión: conectate para importar datos.');
@@ -1065,16 +1079,7 @@ async function executePlan(plan) {
       if (!cur.vehiculo || !cur.vehiculo.nombre) patch.vehiculo = plan.settings.vehiculo;
     } else Object.assign(patch, plan.settings);
   }
-  // Contadores de cada service periódico: último registro preventivo (se pueden editar en Configurar).
-  // Solo avanzan: nunca pisan un valor más reciente ya guardado.
-  const all = [...state.expenses, ...plan.newExpenses].filter(e => e.categoria === 'PREVENTIVO');
-  for (const a of SERVICE_ITEMS) {
-    const hits = all.filter(e => a.match(e));
-    const odo = a.interval ? hits.reduce((m, e) => Number.isFinite(e.odometro) ? Math.max(m, e.odometro) : m, 0) : 0;
-    const fecha = hits.reduce((m, e) => isValidDate(e.fecha) && datePart(e.fecha) > m ? datePart(e.fecha) : m, '');
-    if (odo && odo > (state.settings[a.key] || 0)) patch[a.key] = odo;
-    if (a.months && fecha && fecha > datePart(state.settings[a.fkey])) patch[a.fkey] = fecha;
-  }
+  Object.assign(patch, serviceCounters([...state.expenses, ...plan.newExpenses], { ...state.settings, ...patch }));
   if (Object.keys(patch).length) await store.saveSettings(patch);
   return { inserted: plan.newRefuels.length + plan.newExpenses.length, dupes: plan.dupes, rejected: plan.rejected.length };
 }
@@ -1654,10 +1659,16 @@ function openSettingsModal() {
         ${a.interval ? `<input id="st-${a.key}" class="num" inputmode="numeric" placeholder="Odómetro (km)" aria-label="${esc(a.label)}: odómetro" value="${Number.isFinite(s[a.key]) ? s[a.key] : ''}">` : '<span></span>'}
         ${a.months ? `<input id="st-${a.fkey}" type="date" aria-label="${esc(a.label)}: fecha" value="${esc(datePart(s[a.fkey]))}">` : '<span></span>'}
       </div></div>`).join('')}
+      <button class="btn btn-ghost btn-block" type="button" id="st-derive"><span data-icon="clipboard" data-size="16"></span>Calcular desde el historial de gastos</button>
       <p class="help">Los contadores se reinician automáticamente al registrar un gasto preventivo con la casilla correspondiente.</p>
       <p id="st-error" class="form-error" role="alert" hidden></p>
       <div class="sheet-foot"><button class="btn btn-ghost" type="button" data-modal-close>Cancelar</button><button class="btn btn-primary" type="submit">Guardar</button></div>
     </form>` });
+  $('#st-derive', el).addEventListener('click', async () => {
+    const patch = serviceCounters(state.expenses, state.settings || {}), n = Object.keys(patch).length;
+    if (!n) return toast('No hay datos nuevos en el historial para completar.', 'ok');
+    await store.saveSettings(patch); closeModal(true); toast(`Contadores actualizados desde el historial (${n} valores).`, 'ok');
+  });
   $('#st-form', el).addEventListener('submit', async ev => {
     ev.preventDefault();
     const err = m => { const p = $('#st-error', el); p.textContent = m; p.hidden = !m; };
@@ -1817,7 +1828,7 @@ async function boot() {
 
   if (DEMO) {
     store = createMemoryStore();
-    window.__garage = { state, derive, buildDrivvoPlan, buildJsonPlan, computeAlerts };   // solo para pruebas locales
+    window.__garage = { state, derive, buildDrivvoPlan, buildJsonPlan, computeAlerts, serviceCounters };   // solo para pruebas locales
     enterApp({ uid: 'demo', email: 'demo@local' });
     return;
   }
