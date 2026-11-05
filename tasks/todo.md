@@ -178,11 +178,11 @@
 **Agente / Modelo:** Software Architect / Opus
 **Descripción:** Escribir `tasks/adr-recurrentes.md`: colección o campo (`id, nombre, tipo seguro/patente, modo: mensual (seguro) o próximo vencimiento manual (patente, que es irregular), diaVencimiento, montoEstimado, aseguradora/póliza, inicioPoliza opcional, activo`). Basarse en los patrones reales documentados en plan.md → "Formato CSV de Wallet": varios pagos en un mismo mes, un pago que cubre dos cuotas, pagos tipo "diferencia de póliza" y meses sin pago, pagos como gastos TRAMITES con `recurrenteId` y `periodo` (YYYY-MM), estados pagado/pendiente/vencido, regla para calcular el período vigente, y migración de la fecha `seguro` de `DATE_ALERTS` (:491). Incluir el impacto en `firestore.rules`.
 **Criterios de aceptación:**
-- [ ] Define el cálculo del estado de un período con ejemplos (día 10, hoy día 12, sin pago, etc.).
-- [ ] Define la migración de `seguro` y qué pasa si no hay fecha.
-- [ ] Define el campo para guardar la variación % sin recalcular a mano.
+- [x] Define el cálculo del estado de un período con ejemplos (día 10, hoy día 12, sin pago, etc.).
+- [x] Define la migración de `seguro` y qué pasa si no hay fecha.
+- [x] Define el campo para guardar la variación % sin recalcular a mano.
 **Verificación:**
-- [ ] `node tests/smoke.mjs` (no cambia; el ADR no toca código)
+- [x] `node tests/smoke.mjs` (no cambia; el ADR no toca código)
 - [ ] El ADR cubre con ejemplos los casos reales: jul-2022 (un pago = 2 cuotas), feb-2023 (cuota + diferencia), patente con huecos de 8 meses.
 **Dependencias:** T1.2
 **Archivos probables:** `tasks/adr-recurrentes.md`
