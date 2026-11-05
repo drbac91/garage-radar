@@ -252,6 +252,7 @@ button.alert{cursor:pointer}
 .sheet-foot{display:flex;gap:10px;justify-content:flex-end;margin-top:6px;flex-wrap:wrap}
 .check{display:flex;gap:10px;align-items:center;font-size:14px}
 .check input{width:20px;height:20px;accent-color:var(--green)}
+.st-group{font-size:12px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;color:var(--blue);margin-top:8px}
 .tbl{width:100%;border-collapse:collapse;font-size:13.5px}
 .tbl th{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);text-align:left;padding:6px 6px 6px 0}
 .tbl td{padding:6px 6px 6px 0;border-top:1px solid var(--line)}
@@ -489,36 +490,89 @@ const CAT_KEYS = Object.keys(CATS);
 const FUELS = { NAFTA: { unit: 'L', eff: 'km/L', color: 'var(--nafta)' }, GNC: { unit: 'm³', eff: 'km/m³', color: 'var(--gnc)' } };
 const EFF_RANGE = [3, 30];   // rango plausible de rendimiento (km por unidad)
 const DATE_ALERTS = [
-  { key: 'vtv', label: 'VTV', sub: 'Verificación Técnica Vehicular', icon: 'clipboard' },
-  { key: 'oblea', label: 'Oblea de GNC', sub: 'Vencimiento anual', icon: 'flame' },
-  { key: 'pruebaHidraulica', label: 'Prueba hidráulica del cilindro', sub: 'Cada 5 años', icon: 'cylinder' },
-  { key: 'seguro', label: 'Seguro', sub: 'Vencimiento de la póliza', icon: 'shield' }
-];
-// Services periódicos: vencen por km, por tiempo, o lo que ocurra primero. Cada uno guarda en Configurar el
-// odómetro (key) y la fecha (fkey) del último service. `match` reconoce el tipo de gasto que lo reinicia.
-// Intervalos recomendados para un VW Voyage 1.6 (EA111, nafta/GNC) según prácticas habituales de taller;
-// no son el plan oficial de VW: ajustalos con la libreta de service de tu unidad.
-const hasAny = (e, re) => re.test(norm(e.tipo));
+  { key: 'vtv', label: 'VTV', sub: 'Verificación Técnica Vehicular', icon: 'clipboard', grupo: 'Legal' },
+  { key: 'oblea', label: 'Oblea de GNC', sub: 'Vencimiento anual', icon: 'flame', grupo: 'GNC' },
+  { key: 'pruebaHidraulica', label: 'Prueba hidráulica del cilindro', sub: 'Cada 5 años', icon: 'cylinder', grupo: 'GNC' },
+  { key: 'seguro', label: 'Seguro', sub: 'Vencimiento de la póliza', icon: 'shield', grupo: 'Legal' }
+].map(a => ({ ...a, id: a.key, tipo: 'fecha' }));
+// Catálogo de mantenimiento (ADR: tasks/adr-catalogo.md). Cada fila es un dato: vence por km, por tiempo o lo que
+// ocurra primero. Guarda en settings el odómetro (key) y la fecha (fkey) del último service o revisión; `match`
+// reconoce el tipo de gasto que lo reinicia. Intervalos para un VW Voyage 1.6 (EA111, nafta/GNC) según el taller y
+// las fuentes citadas; no son el plan oficial de VW: ajustalos con la libreta de service de tu unidad.
+const GROUPS = ['Neumáticos', 'Frenos', 'Suspensión', 'Eléctrico', 'Motor', 'Confort', 'Legal', 'GNC'];
+const PRACTICA = 'practica';
+const SRC = {
+  autocosmosMx: 'https://noticias.autocosmos.com.mx/2025/06/21/los-errores-mas-comunes-en-el-cuidado-de-los-neumaticos',
+  pirelli: 'https://www.pirelli.com/tyres/es-ar/news/2024/09/19/el-mito-de-lavida-util-de-los-neumaticos-pirelli-cuenta-la-verdad',
+  bridgestone: 'https://autotest.com.ar/consejos/bridgestone-consejos-para-el-uso-inteligente-de-los-neumaticos/',
+  airedesantafe: 'https://www.airedesantafe.com.ar/sociedad/el-60-los-conductores-desconoce-como-evaluar-los-neumaticos-antes-viajar-n260984',
+  autocosmosGnc: 'https://noticias.autocosmos.com.ar/2024/12/24/todo-lo-que-tenes-que-tener-en-cuenta-si-tenes-un-auto-con-gnc-en-argentina',
+  mansuera: 'https://www.mansuera.com/el-amortiguador-componente-fundamental-de-la-suspension/b',
+  cronistaRuta: 'https://www.cronista.com/clase/break/vacaciones-2026-los-puntos-que-si-o-si-tenes-que-controlar-en-tu-auto-antes-de-salir-a-la-ruta',
+  omecanico: 'https://omecanico.com.br/ed-283-motor-troca-das-correias-e-bomba-dagua-volkswagen-voyage-2015/',
+  vwCaddy: 'https://www.volkswagen-comerciales.es/idhub/content/dam/onehub_nfz/importers/es/pdf/plan_mantenimiento_caddy.pdf',
+  cronistaVtv: 'https://www.cronista.com/informacion-gral/aproba-la-vtv-los-elementos-clave-para-pasar-la-verificacion-sin-problemas',
+  derechoZapatillas: 'https://www.derechoenzapatillas.com/2026/que-elementos-de-seguridad-son-obligatorios-en-el-auto/',
+  c5n: 'https://www.c5n.com/sociedad/de-cuanto-es-la-multa-no-tener-el-matafuegos-y-las-balizas-el-auto-n119470',
+  taller: 'Taller de Bryan (05/11/2026)'
+};
+// Avisos por defecto (ADR §1): 1.000 km hasta 10.000, 2.000 km hasta 20.000, 3.000 km más allá; 7 días si es mensual, 30 hasta 12 meses, 60 más allá.
+const defWarnKm = km => km <= 10000 ? 1000 : km <= 20000 ? 2000 : 3000;
+const defWarnDias = m => m <= 1 ? 7 : m <= 12 ? 30 : 60;
 const SERVICE_ITEMS = [
-  { key: 'ultimoAceiteKm', fkey: 'ultimoAceiteFecha', label: 'Aceite y filtro de aceite', interval: 10000, months: 12, icon: 'drop', sub: 'Cada 10.000 km o 12 meses',
-    match: e => { const t = norm(e.tipo); return t.includes('aceite') && t !== 'filtro de aceite' && !/caja|transmision|diferencial|direccion|hidraulic|frenos/.test(t); } },
-  { key: 'ultimoBujiasKm', fkey: 'ultimoBujiasFecha', label: 'Bujías y cables', interval: 20000, icon: 'bolt', sub: 'Cada 20.000 km · crítico para GNC',
-    match: e => hasAny(e, /bujia/) },
-  { key: 'ultimoDistribucionKm', fkey: 'ultimoDistribucionFecha', label: 'Correa de distribución, tensor y bomba de agua', interval: 60000, months: 60, icon: 'gear', sub: 'Cada 60.000 km o 5 años · si se corta, destruye el motor',
-    match: e => hasAny(e, /distribucion|correa dentada/) },
-  { key: 'ultimoFiltroAireKm', fkey: 'ultimoFiltroAireFecha', label: 'Filtro de aire', interval: 15000, months: 12, icon: 'clipboard', sub: 'Cada 15.000 km o 12 meses',
-    match: e => hasAny(e, /filtro de aire/) && !hasAny(e, /cabina|habitaculo|polen/) },
-  { key: 'ultimoFiltroCombKm', fkey: 'ultimoFiltroCombFecha', label: 'Filtro de combustible', interval: 20000, months: 24, icon: 'fuel', sub: 'Cada 20.000 km o 2 años',
-    match: e => hasAny(e, /filtro de (combustible|nafta)/) },
-  { key: 'ultimoFrenosKm', fkey: 'ultimoFrenosFecha', label: 'Líquido de frenos', months: 24, icon: 'shield', sub: 'Cada 2 años (absorbe humedad)',
-    match: e => hasAny(e, /liquido de frenos/) },
-  { key: 'ultimoRefrigeranteKm', fkey: 'ultimoRefrigeranteFecha', label: 'Líquido refrigerante', months: 24, icon: 'drop', sub: 'Cada 2 años',
-    match: e => hasAny(e, /refrigerante/) },
-  { key: 'ultimoNeumaticosKm', fkey: 'ultimoNeumaticosFecha', label: 'Rotación y alineación', interval: 10000, icon: 'wrench', sub: 'Cada 10.000 km',
-    match: e => hasAny(e, /rotar|rotacion|alineacion|balanceo/) },
-  { key: 'ultimoGncKm', fkey: 'ultimoGncFecha', label: 'Equipo de GNC (filtros y revisión)', interval: 15000, months: 12, icon: 'flame', sub: 'Cada 15.000 km o 12 meses',
-    match: e => hasAny(e, /perdidas.*gnc|gnc.*perdidas|filtro.*gnc|gnc.*filtro|revision.*gnc|gnc.*revision|service.*gnc|gnc.*service/) }
-];
+  { id: 'rotacion', grupo: 'Neumáticos', label: 'Rotación de neumáticos', km: 10000, tipo: 'service', prioridad: 'importante', motivo: 'Desgaste parejo', fuente: SRC.autocosmosMx, match: { re: /rotar|rotacion/ }, icon: 'wrench' },
+  { id: 'alineacion', grupo: 'Neumáticos', label: 'Alineación', km: 10000, meses: 12, tipo: 'service', prioridad: 'importante', motivo: 'Desgaste y estabilidad', fuente: SRC.pirelli, match: { re: /alinea/ }, icon: 'wrench' },
+  { id: 'balanceo', grupo: 'Neumáticos', label: 'Balanceo', km: 10000, meses: 12, tipo: 'service', prioridad: 'importante', motivo: 'Vibraciones y desgaste', fuente: SRC.bridgestone, match: { re: /balanceo/ }, icon: 'wrench' },
+  { id: 'presion', grupo: 'Neumáticos', label: 'Presión (incluido el auxilio)', meses: 1, tipo: 'inspeccion', prioridad: 'importante', motivo: 'Seguridad y consumo', fuente: SRC.bridgestone, match: { re: /presion/ }, icon: 'clipboard' },
+  { id: 'profundidad', grupo: 'Neumáticos', label: 'Profundidad y edad de neumáticos', km: 10000, meses: 12, tipo: 'inspeccion', prioridad: 'critico', motivo: 'Avisá con menos de 3 mm; mínimo legal 1,6 mm (Ley 24.449). Revisar a los 5 años, cambiar a los ~10 (DOT)', fuente: SRC.airedesantafe, match: { re: /profundidad|neumaticos? nuevos|cubiertas nuevas|cambio de (neumaticos|cubiertas)/ }, icon: 'clipboard' },
+  { id: 'pastillas', grupo: 'Frenos', label: 'Pastillas de freno', km: 10000, meses: 12, tipo: 'inspeccion', prioridad: 'critico', motivo: 'Seguridad', fuente: SRC.autocosmosGnc, match: { re: /pastilla/ }, icon: 'shield' },
+  { id: 'discos', grupo: 'Frenos', label: 'Discos de freno', km: 20000, meses: 24, tipo: 'inspeccion', prioridad: 'importante', motivo: 'Desgaste de frenado', fuente: PRACTICA, match: { re: /discos?( de)? freno|rectificado/ }, icon: 'shield' },
+  { id: 'liquidoFrenos', stem: 'Frenos', grupo: 'Frenos', label: 'Líquido de frenos', meses: 24, tipo: 'service', prioridad: 'importante', motivo: 'Absorbe humedad', fuente: PRACTICA, match: { re: /liquido de frenos/ }, icon: 'shield' },
+  { id: 'trenDelantero', grupo: 'Suspensión', label: 'Tren delantero', km: 20000, meses: 12, tipo: 'inspeccion', prioridad: 'critico', motivo: 'Seguridad y desgaste (más de 200.000 km)', fuente: PRACTICA, match: { re: /tren delantero|rotula|extremo de direccion|bujes|parrilla/ }, icon: 'gear' },
+  { id: 'amortiguadores', grupo: 'Suspensión', label: 'Amortiguadores', km: 20000, meses: 12, tipo: 'inspeccion', prioridad: 'importante', motivo: 'Estabilidad y frenado', fuente: SRC.mansuera, match: { re: /amortiguador/ }, icon: 'gear' },
+  { id: 'bateria', grupo: 'Eléctrico', label: 'Batería', meses: 12, tipo: 'inspeccion', prioridad: 'importante', motivo: 'Arranque confiable', fuente: SRC.cronistaRuta, match: { re: /bateria/ }, icon: 'bolt' },
+  { id: 'aceite', grupo: 'Motor', label: 'Aceite y filtro de aceite', km: 10000, meses: 12, tipo: 'service', prioridad: 'critico', motivo: 'Mantener 12 meses por uso con GNC', fuente: PRACTICA,
+    match: { re: /aceite/, not: /^filtro de aceite$|caja|transmision|diferencial|direccion|hidraulic|frenos/ }, icon: 'drop' },
+  { id: 'bujias', grupo: 'Motor', label: 'Bujías y cables', km: 15000, tipo: 'service', prioridad: 'importante', motivo: 'Crítico con GNC', fuente: PRACTICA, match: { re: /bujia/ }, icon: 'bolt' },
+  { id: 'distribucion', grupo: 'Motor', label: 'Correa de distribución, tensor y bomba de agua', km: 50000, meses: 60, tipo: 'service', prioridad: 'critico', motivo: 'Motor de interferencia: si se corta, destruye el motor', fuente: SRC.taller, match: { re: /distribucion|correa dentada/ }, icon: 'gear' },
+  { id: 'polyV', grupo: 'Motor', label: 'Correa poly-V (accesorios)', km: 25000, meses: 48, tipo: 'inspeccion', prioridad: 'importante', motivo: 'Alternador y accesorios; se cambia junto con la distribución', fuente: SRC.omecanico, match: { re: /poly|poli ?v|correa de (accesorios|alternador)/ }, icon: 'gear' },
+  { id: 'filtroAire', grupo: 'Motor', label: 'Filtro de aire', km: 15000, meses: 12, tipo: 'service', prioridad: 'recomendado', motivo: 'Respiración del motor', fuente: PRACTICA, match: { re: /filtro de aire/, not: /cabina|habitaculo|polen/ }, icon: 'clipboard' },
+  { id: 'filtroComb', grupo: 'Motor', label: 'Filtro de combustible', km: 20000, meses: 24, tipo: 'service', prioridad: 'importante', motivo: 'Inyección', fuente: PRACTICA, match: { re: /filtro de (combustible|nafta)/ }, icon: 'fuel' },
+  { id: 'refrigerante', grupo: 'Motor', label: 'Líquido refrigerante', meses: 24, tipo: 'service', prioridad: 'importante', motivo: 'Temperatura del motor', fuente: PRACTICA, match: { re: /refrigerante/, not: /aire acondicionado/ }, icon: 'drop' },
+  { id: 'aceiteCaja', grupo: 'Motor', label: 'Aceite de caja (MQ200)', km: 60000, tipo: 'service', prioridad: 'recomendado', motivo: 'Sin fuente oficial', fuente: PRACTICA, match: { re: /aceite.*(caja|transmision)|(caja|transmision).*aceite/ }, icon: 'drop' },
+  { id: 'embrague', grupo: 'Motor', label: 'Embrague', km: 20000, meses: 12, tipo: 'inspeccion', prioridad: 'recomendado', motivo: 'Desgaste', fuente: PRACTICA, match: { re: /embrague/ }, icon: 'gear' },
+  { id: 'escape', grupo: 'Motor', label: 'Escape', km: 20000, meses: 12, tipo: 'inspeccion', prioridad: 'recomendado', motivo: 'Fugas y corrosión', fuente: PRACTICA, match: { re: /escape|silenciador|catalizador/ }, icon: 'wrench' },
+  { id: 'filtroHabitaculo', grupo: 'Confort', label: 'Filtro de habitáculo', km: 15000, meses: 12, tipo: 'service', prioridad: 'recomendado', motivo: 'Aire de cabina', fuente: SRC.vwCaddy, match: { re: /filtro.*(cabina|habitaculo|polen)/ }, icon: 'clipboard' },
+  { id: 'escobillas', grupo: 'Confort', label: 'Escobillas', meses: 12, tipo: 'service', prioridad: 'recomendado', motivo: 'Visibilidad', fuente: PRACTICA, match: { re: /escobilla|limpia ?parabrisas/ }, icon: 'drop' },
+  { id: 'aireAcondicionado', grupo: 'Confort', label: 'Aire acondicionado', meses: 12, tipo: 'inspeccion', prioridad: 'recomendado', motivo: 'Funcionamiento', fuente: PRACTICA, match: { re: /aire acondicionado/ }, icon: 'gear' },
+  { id: 'luces', grupo: 'Legal', label: 'Luces', meses: 1, tipo: 'inspeccion', prioridad: 'importante', motivo: 'Seguridad y VTV', fuente: SRC.cronistaVtv, match: { re: /lampara|luces|faro|optica/ }, icon: 'bolt' },
+  { id: 'matafuego', grupo: 'Legal', label: 'Matafuego', meses: 12, tipo: 'inspeccion', prioridad: 'critico', motivo: 'Obligatorio (Ley 24.449)', fuente: SRC.derechoZapatillas, match: { re: /matafuego|extintor/ }, icon: 'flame' },
+  { id: 'kitSeguridad', grupo: 'Legal', label: 'Kit de seguridad (balizas, chaleco)', meses: 12, tipo: 'inspeccion', prioridad: 'importante', motivo: 'Obligatorio; multa', fuente: SRC.c5n, match: { re: /baliza|kit de seguridad|chaleco/ }, icon: 'clipboard' },
+  { id: 'gnc', grupo: 'GNC', label: 'Equipo de GNC (filtros y revisión)', km: 15000, meses: 12, tipo: 'service', prioridad: 'importante', motivo: 'Mantenimiento general; regulador, filtro de gas y válvulas se revisan acá y en la oblea', fuente: PRACTICA,
+    match: { re: /perdidas.*gnc|gnc.*perdidas|filtro.*gnc|gnc.*filtro|revision.*gnc|gnc.*revision|service.*gnc|gnc.*service/ }, icon: 'flame' }
+].map(a => {
+  const stem = a.stem || a.id[0].toUpperCase() + a.id.slice(1);
+  const every = [a.km && `${new Intl.NumberFormat("es-AR").format(a.km)} km`, a.meses && (a.meses === 1 ? 'mes' : a.meses % 12 ? `${a.meses} meses` : a.meses === 12 ? 'año' : `${a.meses / 12} años`)].filter(Boolean).join(' o ');
+  const re = a.match.re, not = a.match.not;
+  return { km: null, meses: null, warnKm: a.km ? defWarnKm(a.km) : null, warnDias: a.meses ? defWarnDias(a.meses) : null, ...a,
+    key: `ultimo${stem}Km`, fkey: `ultimo${stem}Fecha`, sub: `Cada ${every}`, matchRule: a.match,
+    match: e => { const t = norm(e.tipo); return re.test(t) && !(not && not.test(t)); } };
+});
+// Migración: "Rotación y alineación" (ultimoNeumaticosKm/Fecha) se dividió en rotación, alineación y balanceo.
+// Pura e idempotente: copia solo a destinos vacíos, una sola vez (marca en `migraciones`) y no borra la clave vieja.
+function migrateSettings(s) {
+  s = s || {};
+  if (s.migraciones && s.migraciones.neumaticos3) return {};
+  // Sin datos viejos no hay nada que migrar ni se marca: un respaldo viejo importado después todavía se migra.
+  if (!Number.isFinite(s.ultimoNeumaticosKm) && !isValidDate(s.ultimoNeumaticosFecha)) return {};
+  const patch = { migraciones: { neumaticos3: true } };
+  const empty = v => v === undefined || v === null || v === '';
+  for (const stem of ['Rotacion', 'Alineacion', 'Balanceo']) {
+    if (Number.isFinite(s.ultimoNeumaticosKm) && empty(s[`ultimo${stem}Km`])) patch[`ultimo${stem}Km`] = s.ultimoNeumaticosKm;
+    if (isValidDate(s.ultimoNeumaticosFecha) && empty(s[`ultimo${stem}Fecha`])) patch[`ultimo${stem}Fecha`] = datePart(s.ultimoNeumaticosFecha);
+  }
+  return patch;
+}
 const MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 
 /* ============================= 2. UTILIDADES ============================ */
@@ -721,7 +775,7 @@ function createFirestoreStore(uid) {
     subscribe(n, cb, onErr) {
       const meta = { includeMetadataChanges: true };
       if (n === 'settings') {
-        return fsM.onSnapshot(settingsRef, meta, s => { state.pending = s.metadata.hasPendingWrites; cb(s.exists() ? s.data() : {}); }, onErr);
+        return fsM.onSnapshot(settingsRef, meta, s => { state.pending = s.metadata.hasPendingWrites; cb(s.exists() ? s.data() : {}, s.metadata.fromCache); }, onErr);
       }
       return fsM.onSnapshot(col(n), meta, s => {
         state.pending = s.metadata.hasPendingWrites;
@@ -761,7 +815,13 @@ function startSession() {
   state.refuels = []; state.expenses = []; state.settings = {};
   const onErr = e => { showGlobalError(friendlyError(e)); toast(friendlyError(e), 'err'); };
   ['refuels', 'expenses', 'settings'].forEach(n => {
-    unsubs.push(store.subscribe(n, data => { state[n] = data; state.loaded[n] = true; scheduleRender(); }, onErr));
+    unsubs.push(store.subscribe(n, (data, fromCache) => {
+      state[n] = data; state.loaded[n] = true; scheduleRender();
+      if (n === 'settings' && !fromCache) {   // una caché vieja no debe pisar lo que otro dispositivo ya migró
+        const patch = migrateSettings(data);
+        if (Object.keys(patch).length) store.saveSettings(patch);
+      }
+    }, onErr));
   });
   scheduleRender();
 }
@@ -846,34 +906,43 @@ function derive() {
   return { kmNow, kmMin, span, segs, segById, eff, mix, fuelTotal, otherTotal, cpk, catTotals, months };
 }
 
-// Estado de cada vencimiento, ordenadas de la más crítica a la menos crítica.
+// Km de referencia para los contadores: el mayor entre el odómetro registrado y los km base cargados
+// (un ítem configurado en el onboarding no queda "sin configurar" aunque todavía no haya cargas).
+function kmRef(D, s = state.settings || {}) {
+  const all = [D && D.kmNow, ...SERVICE_ITEMS.map(a => s[a.key])].filter(n => Number.isFinite(n) && n > 0);
+  return all.length ? Math.max(...all) : null;
+}
+const ALERT_RANK = { red: 0, yellow: 1, green: 2, none: 3 };
+// Estado de cada vencimiento, ordenados del más crítico al menos crítico. Los ítems "no aplica" no se devuelven.
+// Un ítem sin datos marcado "no sé, revisar ya" (settings.pendientes) cuenta como rojo.
 function computeAlerts(D) {
   const s = state.settings || {};
-  const venc = s.vencimientos || {};
-  const out = [];
-  const rank = { red: 0, yellow: 1, green: 2, none: 3 };
+  const venc = s.vencimientos || {}, off = s.noAplica || {}, pend = s.pendientes || {}, revs = s.revisiones || {};
+  const rank = ALERT_RANK, out = [], km = kmRef(D, s);
+  const unset = a => pend[a.id] ? { ...a, st: 'red', pending: true } : { ...a, st: 'none' };
   for (const a of DATE_ALERTS) {
+    if (off[a.id]) continue;
     const iso = venc[a.key];
-    if (!iso || !isValidDate(iso)) { out.push({ ...a, kind: 'date', st: 'none' }); continue; }
+    if (!iso || !isValidDate(iso)) { out.push(unset({ ...a, kind: 'date' })); continue; }
     const days = daysUntil(iso);
     const st = days <= 0 ? 'red' : days <= 30 ? 'yellow' : 'green';
     out.push({ ...a, kind: 'date', st, days, iso });
   }
   for (const a of SERVICE_ITEMS) {
+    if (off[a.id]) continue;
     // Estado por km y por tiempo (lo que ocurra primero); se muestra el peor de los dos.
-    const parts = [];
-    const base = s[a.key];
-    if (a.interval && Number.isFinite(base) && D.kmNow !== null) {
-      const rem = base + a.interval - D.kmNow, warn = Math.max(1000, a.interval * 0.1);
-      parts.push({ by: 'km', rem, target: base + a.interval, st: rem <= 0 ? 'red' : rem <= warn ? 'yellow' : 'green' });
+    const parts = [], base = s[a.key], last = (revs[a.id] || [])[0] || null;
+    if (a.km && Number.isFinite(base) && km !== null) {
+      const rem = base + a.km - km;
+      parts.push({ by: 'km', rem, target: base + a.km, st: rem <= 0 ? 'red' : rem <= a.warnKm ? 'yellow' : 'green' });
     }
-    if (a.months && isValidDate(s[a.fkey])) {
-      const iso = addMonths(s[a.fkey], a.months), days = daysUntil(iso);
-      parts.push({ by: 'date', days, iso, st: days <= 0 ? 'red' : days <= 30 ? 'yellow' : 'green' });
+    if (a.meses && isValidDate(s[a.fkey])) {
+      const iso = addMonths(s[a.fkey], a.meses), days = daysUntil(iso);
+      parts.push({ by: 'date', days, iso, st: days <= 0 ? 'red' : days <= a.warnDias ? 'yellow' : 'green' });
     }
-    if (!parts.length) { out.push({ ...a, kind: 'service', st: 'none' }); continue; }
+    if (!parts.length) { out.push(unset({ ...a, kind: 'service', lastReview: last })); continue; }
     const main = parts.reduce((w, p) => rank[p.st] < rank[w.st] ? p : w);
-    out.push({ ...a, kind: 'service', st: main.st, main, kmPart: parts.find(p => p.by === 'km'), datePart: parts.find(p => p.by === 'date') });
+    out.push({ ...a, kind: 'service', st: main.st, main, kmPart: parts.find(p => p.by === 'km'), datePart: parts.find(p => p.by === 'date'), lastReview: last });
   }
   return out.sort((x, y) => rank[x.st] - rank[y.st]);   // sort estable
 }
@@ -1059,10 +1128,10 @@ function serviceCounters(expenses, cur) {
   const patch = {};
   for (const a of SERVICE_ITEMS) {
     const hits = expenses.filter(e => a.match(e));
-    const odo = a.interval ? hits.reduce((m, e) => Number.isFinite(e.odometro) ? Math.max(m, e.odometro) : m, 0) : 0;
+    const odo = a.km ? hits.reduce((m, e) => Number.isFinite(e.odometro) ? Math.max(m, e.odometro) : m, 0) : 0;
     const fecha = hits.reduce((m, e) => isValidDate(e.fecha) && datePart(e.fecha) > m ? datePart(e.fecha) : m, '');
     if (odo && odo > (cur[a.key] || 0)) patch[a.key] = odo;
-    if (a.months && fecha && fecha > datePart(cur[a.fkey])) patch[a.fkey] = fecha;
+    if (fecha && fecha > datePart(cur[a.fkey])) patch[a.fkey] = fecha;   // la fecha se guarda siempre ("última vez")
   }
   return patch;
 }
@@ -1625,7 +1694,7 @@ function openExpenseModal(existing) {
     if (!isValidDate(fecha)) return err('Ingresá una fecha válida.');
     if (!Number.isFinite(monto) || monto < 0) return err('Ingresá un monto válido.');
     if (odoRaw && !(odo > 0)) return err('El odómetro debe ser un número mayor a 0.');
-    if (resets.some(a => a.interval) && !odo) return err('Para reiniciar un contador por km ingresá el odómetro del service.');
+    if (resets.some(a => a.km) && !odo) return err('Para reiniciar un contador por km ingresá el odómetro del service.');
     const time = existing && datePart(existing.fecha) === fecha ? (String(existing.fecha).slice(11) || '12:00:00') : nowTime();
     await store.save('expenses', {
       ...(existing ? { id: existing.id } : {}), fecha: `${fecha}T${time}`, odometro: odo, categoria: cat,
@@ -1633,7 +1702,7 @@ function openExpenseModal(existing) {
       grupoId: existing?.grupoId || null, origen: existing?.origen || 'manual'
     });
     const patch = {};
-    for (const a of resets) { if (a.interval) patch[a.key] = odo; patch[a.fkey] = fecha; }
+    for (const a of resets) { if (a.km) patch[a.key] = odo; patch[a.fkey] = fecha; }
     if (Object.keys(patch).length) await store.saveSettings(patch);
     closeModal(true); toast(existing ? 'Gasto actualizado.' : 'Gasto registrado.', 'ok');
   });
@@ -1641,7 +1710,7 @@ function openExpenseModal(existing) {
 
 /* ---- Configurar vencimientos y odómetros base ---- */
 function openSettingsModal() {
-  const s = state.settings || {}, v = s.vehiculo || {}, ven = s.vencimientos || {};
+  const s = state.settings || {}, v = s.vehiculo || {}, ven = s.vencimientos || {}, off = s.noAplica || {};
   const el = openModal({ title: 'Configurar vehículo y vencimientos', body: `
     <form id="st-form" class="sheet-body" novalidate autocomplete="off">
       <div class="grid-2">
@@ -1654,11 +1723,15 @@ function openSettingsModal() {
       <div class="grid-2">
         ${DATE_ALERTS.map(a => `<div class="field"><label for="st-${a.key}">${esc(a.label)}</label><input id="st-${a.key}" type="date" value="${esc(datePart(ven[a.key]))}"></div>`).join('')}
       </div>
-      <div class="tile-label" style="margin-top:6px">Último service de cada ítem (odómetro y fecha)</div>
-      ${SERVICE_ITEMS.map(a => `<div class="field"><label>${esc(a.label)} <small>· ${esc(a.sub)}</small></label><div class="grid-2">
-        ${a.interval ? `<input id="st-${a.key}" class="num" inputmode="numeric" placeholder="Odómetro (km)" aria-label="${esc(a.label)}: odómetro" value="${Number.isFinite(s[a.key]) ? s[a.key] : ''}">` : '<span></span>'}
-        ${a.months ? `<input id="st-${a.fkey}" type="date" aria-label="${esc(a.label)}: fecha" value="${esc(datePart(s[a.fkey]))}">` : '<span></span>'}
-      </div></div>`).join('')}
+      <div class="tile-label" style="margin-top:6px">Último service o revisión de cada ítem (odómetro y fecha)</div>
+      ${GROUPS.map(g => { const its = SERVICE_ITEMS.filter(a => a.grupo === g && !off[a.id]); return its.length ? `<div class="st-group">${esc(g)}</div>` + its.map(a => `<div class="field"><label>${esc(a.label)} <small>· ${esc(a.sub)}</small></label><div class="grid-2">
+        ${a.km ? `<input id="st-${a.key}" class="num" inputmode="numeric" placeholder="Odómetro (km)" aria-label="${esc(a.label)}: odómetro" value="${Number.isFinite(s[a.key]) ? s[a.key] : ''}">` : '<span></span>'}
+        <input id="st-${a.fkey}" type="date" aria-label="${esc(a.label)}: fecha" value="${esc(datePart(s[a.fkey]))}">
+      </div></div>`).join('') : ''; }).join('')}
+      <details class="more-info"><summary>Ítems que no aplican a tu auto (${nf([...DATE_ALERTS, ...SERVICE_ITEMS].filter(a => off[a.id]).length)})</summary>
+        <p class="help">Los ítems tildados no aparecen en Vencimientos, Resumen ni en la carga inicial.</p>
+        <div class="stack">${[...DATE_ALERTS, ...SERVICE_ITEMS].map(a => `<label class="check"><input type="checkbox" data-noaplica="${esc(a.id)}" ${off[a.id] ? 'checked' : ''}> ${esc(a.label)}</label>`).join('')}</div>
+      </details>
       <button class="btn btn-ghost btn-block" type="button" id="st-derive"><span data-icon="clipboard" data-size="16"></span>Calcular desde el historial de gastos</button>
       <p class="help">Los contadores se reinician automáticamente al registrar un gasto preventivo con la casilla correspondiente.</p>
       <p id="st-error" class="form-error" role="alert" hidden></p>
@@ -1682,17 +1755,17 @@ function openSettingsModal() {
       patch.vencimientos[a.key] = val || '';
     }
     for (const a of SERVICE_ITEMS) {
-      if (a.interval) {
+      if (off[a.id]) continue;   // oculto en el formulario: no se toca lo guardado
+      if (a.km) {
         const raw = $('#st-' + a.key, el).value.trim(), n = parseKm(raw);
         if (raw && !(n >= 0)) return err(`Odómetro inválido en ${a.label}.`);
         patch[a.key] = raw ? n : null;
       }
-      if (a.months) {
-        const f = $('#st-' + a.fkey, el).value;
-        if (f && !isValidDate(f)) return err(`Fecha inválida en ${a.label}.`);
-        patch[a.fkey] = f || null;
-      }
+      const f = $('#st-' + a.fkey, el).value;
+      if (f && !isValidDate(f)) return err(`Fecha inválida en ${a.label}.`);
+      patch[a.fkey] = f || null;
     }
+    patch.noAplica = Object.fromEntries($$('[data-noaplica]', el).map(c => [c.dataset.noaplica, c.checked]));
     await store.saveSettings(patch); closeModal(true); toast('Configuración guardada.', 'ok');
   });
 }
@@ -1828,8 +1901,8 @@ async function boot() {
 
   if (DEMO) {
     store = createMemoryStore();
-    window.__garage = { state, derive, buildDrivvoPlan, buildJsonPlan, computeAlerts, serviceCounters,
-      parseCSV, finishPlan, executePlan, showPlanPreview };   // solo para pruebas locales (tests/smoke.mjs)
+    window.__garage = { state, store, derive, buildDrivvoPlan, buildJsonPlan, computeAlerts, serviceCounters,
+      parseCSV, finishPlan, executePlan, showPlanPreview, migrateSettings, SERVICE_ITEMS, DATE_ALERTS, GROUPS };   // solo para pruebas locales (tests/smoke.mjs)
     enterApp({ uid: 'demo', email: 'demo@local' });
     return;
   }

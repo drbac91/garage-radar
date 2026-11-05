@@ -77,7 +77,7 @@ La correa poly-V se modela como **inspección cada 25.000 km o 48 meses**, y el 
 
 1. Si `s.migraciones?.neumaticos3` es verdadero, devuelve `{}`.
 2. Si no, para cada uno de `Rotacion`, `Alineacion` y `Balanceo`, copia `ultimoNeumaticosKm` y `ultimoNeumaticosFecha` **solo si** el destino está vacío (`undefined` **o** `null`, porque el formulario de Configurar guarda `null` en los campos vacíos).
-3. Agrega `migraciones: { neumaticos3: true }`, aunque no haya nada que copiar.
+3. Agrega `migraciones: { neumaticos3: true }`. Si no hay `ultimoNeumaticosKm` ni `ultimoNeumaticosFecha`, no hace nada **ni pone la marca**, así que un respaldo viejo importado en una cuenta nueva también se migra.
 4. **Nunca** borra ni modifica `ultimoNeumaticosKm/Fecha`.
 
 Corre en la suscripción de `settings`. En Firestore se saltea si el snapshot viene de la caché (`metadata.fromCache`), para que una caché vieja no pise valores ya migrados desde otro dispositivo. Correrla dos veces da `{}` la segunda vez, y la smoke lo verifica. **Caso borde:** si después de migrar se importa un respaldo viejo con `ultimoNeumaticosKm`, no se vuelve a copiar (la marca ya está). Se puede usar "Calcular desde el historial" o cargar el dato a mano.

@@ -80,12 +80,12 @@
 **Agente / Modelo:** Frontend Developer / Sonnet
 **Descripción:** Reemplazar `SERVICE_ITEMS` (:502) por el catálogo declarativo del plan (31 ítems). Migrar `ultimoNeumaticosKm/Fecha` a los ítems rotación, alineación y balanceo (los tres heredan el valor, sin borrar la clave vieja hasta el checkpoint). Subir el intervalo de bujías de 20.000 a 15.000 km. Adaptar `computeAlerts` (:850) y `serviceCounters` (:1058) al nuevo esquema. Hacer esto después de T0.0 y con el respaldo a mano.
 **Criterios de aceptación:**
-- [ ] Hay 25 o más ítems en `computeAlerts` con el demo.
-- [ ] Con `backup-mini.json`, los tres ítems de neumáticos arrancan con el km/fecha de `ultimoNeumaticosKm/Fecha`.
-- [ ] Bujías avisa a 15.000 km.
-- [ ] Correr la migración dos veces no cambia el resultado.
+- [x] Hay 25 o más ítems en `computeAlerts` con el demo.
+- [x] Con `backup-mini.json`, los tres ítems de neumáticos arrancan con el km/fecha de `ultimoNeumaticosKm/Fecha`.
+- [x] Bujías avisa a 15.000 km.
+- [x] Correr la migración dos veces no cambia el resultado.
 **Verificación:**
-- [ ] `node tests/smoke.mjs` (casos nuevos: "catálogo >= 25 ítems", "migración neumáticos idempotente", "bujías 15.000")
+- [x] `node tests/smoke.mjs` (casos nuevos: "catálogo >= 25 ítems", "migración neumáticos idempotente", "bujías 15.000")
 - [ ] Revisión manual: en iPhone, los datos reales de oil/filtros siguen mostrando las mismas fechas que antes.
 **Dependencias:** T1.1, T0.0
 **Archivos probables:** `index.html` (:502, :850, :1058), `tests/smoke.mjs`

@@ -103,8 +103,8 @@ async function main() {
         assert(api.includes(k), `window.__garage no expone ${k}`);
       assert(await page.locator('#screen-app').isVisible(), 'la pantalla principal no está visible');
       const s = await alertSummary(page);
-      eq(s.total, 13, 'cantidad de alertas (4 por fecha + 9 services)');
-      eq(s.none, 13, 'sin datos, todas las alertas quedan sin configurar');
+      eq(s.total, 32, 'cantidad de alertas (4 por fecha + 28 ítems del catálogo)');
+      eq(s.none, 32, 'sin datos, todas las alertas quedan sin configurar');
       await settle(page);
       eq(errors, [], 'errores de consola');
       await ctx.close();
@@ -136,15 +136,15 @@ async function main() {
       const after = await page.evaluate(() => {
         const g = window.__garage, D = g.derive(), s = g.state.settings;
         return { kmNow: D.kmNow, fuelTotal: D.fuelTotal, otherTotal: D.otherTotal, vehiculo: s.vehiculo?.nombre,
-          aceite: [s.ultimoAceiteKm, s.ultimoAceiteFecha], neumaticos: s.ultimoNeumaticosKm };
+          aceite: [s.ultimoAceiteKm, s.ultimoAceiteFecha], rotacion: s.ultimoRotacionKm };
       });
-      eq(after, { kmNow: 209300, fuelTotal: 102500, otherTotal: 122000, vehiculo: 'Auto de prueba', aceite: [209100, '2026-02-15'], neumaticos: 209100 }, 'totales y contadores tras importar');
+      eq(after, { kmNow: 209300, fuelTotal: 102500, otherTotal: 122000, vehiculo: 'Auto de prueba', aceite: [209100, '2026-02-15'], rotacion: 209100 }, 'totales y contadores tras importar');
 
       const again = await page.evaluate(t => { const p = window.__garage.buildDrivvoPlan(t); return { dupes: p.dupes, nuevos: p.newRefuels.length + p.newExpenses.length }; }, drivvo);
       eq(again, { dupes: 6, nuevos: 0 }, 'reimportación');
 
       const s = await alertSummary(page);
-      eq({ red: s.red, yellow: s.yellow, green: s.green }, { red: [], yellow: [], green: ['ultimoAceiteKm', 'ultimoNeumaticosKm'] }, 'alertas tras Drivvo');
+      eq({ red: s.red, yellow: s.yellow, green: s.green }, { red: [], yellow: [], green: ['ultimoAceiteKm', 'ultimoRotacionKm'] }, 'alertas tras Drivvo');
       eq(errors, [], 'errores de consola');
       await ctx.close();
     });
@@ -159,9 +159,80 @@ async function main() {
       eq(res, { refuels: 2, expenses: 1, rejected: 0, inserted: 3 }, 'plan JSON');
       await settle(page);
       const st = await page.evaluate(() => { const s = window.__garage.state.settings; return [s.ultimoNeumaticosKm, s.ultimoNeumaticosFecha, s.vencimientos?.vtv]; });
-      eq(st, [205000, '2025-12-01', '2026-11-20'], 'ajustes del respaldo');
+      eq(st, [205000, '2025-12-01', '2026-11-20'], 'ajustes del respaldo (la clave vieja de neumáticos no se borra)');
+      // T1.2: los tres ítems de neumáticos heredan km y fecha de ultimoNeumaticosKm/Fecha.
+      const tires = await page.evaluate(() => { const s = window.__garage.state.settings;
+        return ['Rotacion', 'Alineacion', 'Balanceo'].map(k => [s[`ultimo${k}Km`], s[`ultimo${k}Fecha`]]).concat([[!!s.migraciones?.neumaticos3]]); });
+      eq(tires, [[205000, '2025-12-01'], [205000, '2025-12-01'], [205000, '2025-12-01'], [true]], 'neumáticos migrados desde el respaldo');
+      // km actual 214.600: rotación/alineación/balanceo vencen a los 215.000 (faltan 400 ≤ 1.000 de aviso); alineación y
+      // balanceo además vencen por fecha el 01/12/2026 (26 días ≤ 30). Aceite: 219.100 km / 15/02/2027.
       const s = await alertSummary(page);
-      eq(s, { total: 13, red: ['oblea'], yellow: ['ultimoNeumaticosKm', 'vtv'], green: ['pruebaHidraulica', 'seguro', 'ultimoAceiteKm'], none: 7 }, 'conteo de alertas con reloj fijo en 2026-11-05');
+      eq(s, { total: 32, red: ['oblea'], yellow: ['ultimoAlineacionKm', 'ultimoBalanceoKm', 'ultimoRotacionKm', 'vtv'], green: ['pruebaHidraulica', 'seguro', 'ultimoAceiteKm'], none: 24 }, 'conteo de alertas con reloj fijo en 2026-11-05');
+      eq(errors, [], 'errores de consola');
+      await ctx.close();
+    });
+
+    await test('T1.2 catálogo >= 25 ítems, 8 grupos y claves únicas', async () => {
+      const { ctx, page, errors } = await openDemo(browser, base);
+      const c = await page.evaluate(() => {
+        const g = window.__garage, items = g.SERVICE_ITEMS, all = [...g.DATE_ALERTS, ...items];
+        const keys = items.flatMap(a => [a.key, a.fkey]).concat(g.DATE_ALERTS.map(a => a.key));
+        const ids = all.map(a => a.id);
+        return { alerts: g.computeAlerts(g.derive()).length, items: items.length,
+          keysUnique: new Set(keys).size === keys.length, idsUnique: new Set(ids).size === ids.length,
+          groups: [...new Set(all.map(a => a.grupo))].sort().join('|') === [...g.GROUPS].sort().join('|') && g.GROUPS.length,
+          tipos: [...new Set(items.map(a => a.tipo))].sort(),
+          bad: items.filter(a => !(a.km || a.meses) || !a.prioridad || !a.fuente || !a.motivo).map(a => a.id),
+          legacy: Object.fromEntries(['aceite', 'bujias', 'distribucion', 'filtroAire', 'filtroComb', 'liquidoFrenos', 'refrigerante', 'gnc'].map(id => [id, items.find(a => a.id === id)?.key])),
+          gnc: items.filter(a => a.grupo === 'GNC').map(a => a.id), distribucion: items.find(a => a.id === 'distribucion').km };
+      });
+      assert(c.alerts >= 25, `computeAlerts devuelve ${c.alerts} ítems (< 25)`);
+      eq({ items: c.items, keysUnique: c.keysUnique, idsUnique: c.idsUnique, groups: c.groups, tipos: c.tipos, bad: c.bad },
+        { items: 28, keysUnique: true, idsUnique: true, groups: 8, tipos: ['inspeccion', 'service'], bad: [] }, 'forma del catálogo');
+      eq(c.legacy, { aceite: 'ultimoAceiteKm', bujias: 'ultimoBujiasKm', distribucion: 'ultimoDistribucionKm', filtroAire: 'ultimoFiltroAireKm',
+        filtroComb: 'ultimoFiltroCombKm', liquidoFrenos: 'ultimoFrenosKm', refrigerante: 'ultimoRefrigeranteKm', gnc: 'ultimoGncKm' }, 'claves heredadas sin cambios');
+      eq([c.gnc, c.distribucion], [['gnc'], 50000], 'GNC con un solo ítem y distribución a 50.000 km');
+      eq(errors, [], 'errores de consola');
+      await ctx.close();
+    });
+
+    await test('T1.2 migración neumáticos idempotente', async () => {
+      const { ctx, page, errors } = await openDemo(browser, base);
+      const r = await page.evaluate(() => {
+        const m = window.__garage.migrateSettings;
+        const old = { ultimoNeumaticosKm: 205000, ultimoNeumaticosFecha: '2025-12-01', ultimoAlineacionKm: null, ultimoBalanceoKm: 207000 };
+        const p1 = m(old), s1 = { ...old, ...p1 }, p2 = m(s1);
+        return { p1, p2, empty: m({}), keepsOld: [s1.ultimoNeumaticosKm, s1.ultimoNeumaticosFecha] };
+      });
+      eq(r.p1, { migraciones: { neumaticos3: true }, ultimoRotacionKm: 205000, ultimoRotacionFecha: '2025-12-01', ultimoAlineacionKm: 205000,
+        ultimoAlineacionFecha: '2025-12-01', ultimoBalanceoFecha: '2025-12-01' }, 'primera corrida (null cuenta como vacío; no pisa balanceo 207.000)');
+      eq(r.p2, {}, 'segunda corrida');
+      eq(r.empty, {}, 'sin datos viejos no hace nada');
+      eq(r.keepsOld, [205000, '2025-12-01'], 'la clave vieja queda');
+      // En la app: la migración corre al recibir los ajustes y una segunda vuelta no cambia nada.
+      await page.evaluate(() => window.__garage.store.saveSettings({ ultimoNeumaticosKm: 205000, ultimoNeumaticosFecha: '2025-12-01' }));
+      await page.waitForFunction(() => window.__garage.state.settings.migraciones?.neumaticos3);
+      const before = await page.evaluate(() => JSON.stringify(window.__garage.state.settings));
+      await page.evaluate(() => window.__garage.store.saveSettings({}));
+      await settle(page);
+      eq(await page.evaluate(() => JSON.stringify(window.__garage.state.settings)), before, 'ajustes tras una segunda vuelta');
+      eq(errors, [], 'errores de consola');
+      await ctx.close();
+    });
+
+    await test('T1.2 bujías avisa a 15.000 km', async () => {
+      const { ctx, page, errors } = await openDemo(browser, base);
+      const at = async odo => page.evaluate(async odo => {
+        const g = window.__garage;
+        await g.store.saveSettings({ ultimoBujiasKm: 200000 });
+        await g.store.save('refuels', { id: 'bj', fecha: '2026-11-01T10:00:00', odometro: odo, combustible: 'GNC', grado: null, volumen: 10, costoTotal: 7000, lleno: true, estacion: '', notas: '', origen: 'manual' });
+        await new Promise(r => setTimeout(r, 30));
+        const a = g.computeAlerts(g.derive()).find(x => x.id === 'bujias');
+        return [a.st, a.kmPart.target];
+      }, odo);
+      eq(await at(212999), ['green', 215000], 'a 2.001 km del cambio');
+      eq(await at(213000), ['yellow', 215000], 'a 2.000 km del cambio');
+      eq(await at(215000), ['red', 215000], 'a los 15.000 km');
       eq(errors, [], 'errores de consola');
       await ctx.close();
     });
