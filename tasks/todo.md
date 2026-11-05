@@ -183,7 +183,7 @@
 - [x] Define el campo para guardar la variación % sin recalcular a mano.
 **Verificación:**
 - [x] `node tests/smoke.mjs` (no cambia; el ADR no toca código)
-- [ ] El ADR cubre con ejemplos los casos reales: jul-2022 (un pago = 2 cuotas), feb-2023 (cuota + diferencia), patente con huecos de 8 meses.
+- [x] El ADR cubre con ejemplos los casos reales: jul-2022 (un pago = 2 cuotas), feb-2023 (cuota + diferencia), patente con huecos de 8 meses.
 **Dependencias:** T1.2
 **Archivos probables:** `tasks/adr-recurrentes.md`
 **Tamaño:** S
