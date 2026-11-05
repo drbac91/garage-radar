@@ -64,6 +64,10 @@ async function test(name, fn) {
   catch (e) { results.push({ name, ok: false, err: e.message }); console.log(`  FAIL ${name}\n       ${e.message}`); }
 }
 
+const saveSettings = (page, patch) => page.evaluate(p => window.__garage.store.saveSettings(p), patch);
+const goTab = async (page, tab) => { await page.evaluate(t => { location.hash = '#/' + t; }, tab); await page.locator(`[data-view=${tab}]`).waitFor({ state: 'visible' }); };
+const rowStates = (page, sel) => page.$$eval(sel, els => els.map(e => [e.dataset.id, e.dataset.s]));
+
 const alertSummary = page => page.evaluate(() => {
   const g = window.__garage, A = g.computeAlerts(g.derive());
   const by = st => A.filter(a => a.st === st).map(a => a.key).sort();
@@ -233,6 +237,178 @@ async function main() {
       eq(await at(212999), ['green', 215000], 'a 2.001 km del cambio');
       eq(await at(213000), ['yellow', 215000], 'a 2.000 km del cambio');
       eq(await at(215000), ['red', 215000], 'a los 15.000 km');
+      eq(errors, [], 'errores de consola');
+      await ctx.close();
+    });
+
+    await test("T1.3 grupos presentes y 'no aplica' oculto", async () => {
+      const { ctx, page, errors } = await openDemo(browser, base);
+      await goTab(page, 'vencimientos');
+      // Neumáticos con un ítem de cada estado (por fecha, reloj en 05/11/2026): presión vencida, profundidad próxima, alineación al día.
+      await saveSettings(page, { ultimoPresionFecha: '2026-09-01', ultimoProfundidadFecha: '2025-11-20', ultimoAlineacionFecha: '2026-06-01', noAplica: { matafuego: true } });
+      await settle(page);
+      const heads = await page.$$eval('#radar-list .rgroup .group-head h3', els => els.map(e => e.textContent));
+      eq(heads, ['Neumáticos', 'Frenos', 'Suspensión', 'Eléctrico', 'Motor', 'Confort', 'Legal', 'GNC'], 'encabezados de grupo');
+      eq(await rowStates(page, '#radar-list .rgroup[data-grupo="Neumáticos"] .alert'),
+        [['presion', 'red'], ['profundidad', 'yellow'], ['alineacion', 'green'], ['rotacion', 'none'], ['balanceo', 'none']], 'orden por urgencia dentro del grupo');
+      eq(await page.locator('#radar-list .rgroup[data-grupo="Neumáticos"] .group-head').getAttribute('aria-expanded'), 'true', 'grupo con rojos abierto');
+      eq(await page.locator('#radar-list .rgroup[data-grupo="Confort"] .group-body').isHidden(), true, 'grupo sin rojos ni amarillos colapsado');
+      const na = await page.evaluate(() => ({ radar: !!document.querySelector('#radar-list [data-id="matafuego"]'), next: !!document.querySelector('#next-list [data-id="matafuego"]'),
+        alerts: window.__garage.computeAlerts(window.__garage.derive()).some(a => a.id === 'matafuego') }));
+      eq(na, { radar: false, next: false, alerts: false }, "'no aplica' fuera de todas las listas");
+      eq(await page.locator('#radar-list .alert[data-id="luces"]').count(), 1, 'el resto del grupo Legal sigue');
+      eq(errors, [], 'errores de consola');
+      await ctx.close();
+    });
+
+    await test('T1.4 onboarding completo deja 0 ítems sin configurar', async () => {
+      const { ctx, page, errors } = await openDemo(browser, base);
+      await goTab(page, 'vencimientos');
+      const progress = () => page.locator('.ob-progress').textContent();
+      await page.locator('#radar-list [data-action=onboarding]').click();
+      await page.locator('#ob-form').waitFor({ state: 'visible' });
+      eq(await progress(), 'Ítem 1 de 32 · Legal', 'primer ítem');
+      const first = await page.locator('#ob-form').getAttribute('id') && await page.evaluate(() => window.__garage.computeAlerts(window.__garage.derive()).find(a => a.st === 'none').id);
+      // 1) cargar dato real
+      await page.locator('#ob-fecha').fill('2027-05-01');
+      await page.locator('#ob-save').click();
+      await page.waitForFunction(() => document.querySelector('.ob-progress')?.textContent.startsWith('Ítem 2 '));
+      // 2) "no aplica"
+      const second = await page.evaluate(() => window.__garage.computeAlerts(window.__garage.derive()).find(a => a.st === 'none').id);
+      await page.locator('#ob-na').click();
+      await page.waitForFunction(() => document.querySelector('.ob-progress')?.textContent.startsWith('Ítem 3 '));
+      // 3) cerrar a mitad y retomar sin perder lo cargado
+      await page.locator('#ob-form [data-modal-close]').click();
+      await page.locator('#ob-form').waitFor({ state: 'detached' });
+      const mid = await page.evaluate(() => { const s = window.__garage.state.settings; return { vtv: s.vencimientos?.vtv, na: s.noAplica }; });
+      eq([first, mid.vtv, second, mid.na], ['vtv', '2027-05-01', 'oblea', { oblea: true }], 'respuestas guardadas al salir');
+      await page.locator('#radar-list [data-action=onboarding]').click();
+      await page.locator('#ob-form').waitFor({ state: 'visible' });
+      eq(await progress(), 'Ítem 1 de 30 · GNC', 'retoma con los 30 pendientes');
+      // 4) "no sé" en todo el resto
+      for (let i = 0; i < 40 && await page.locator('#ob-form').count(); i++) {
+        const before = await progress();
+        await page.locator('#ob-unknown').click();
+        await page.waitForFunction(b => { const p = document.querySelector('.ob-progress'); return !p || p.textContent !== b; }, before);
+      }
+      eq(await page.locator('#ob-form').count(), 0, 'el onboarding terminó');
+      await settle(page);
+      const s = await alertSummary(page);
+      const exp = await page.evaluate(() => window.__garage.state.expenses.length);
+      eq({ none: s.none, total: s.total, red: s.red.length, green: s.green, expenses: exp }, { none: 0, total: 31, red: 30, green: ['vtv'], expenses: 0 }, 'resultado del onboarding');
+      eq(await page.locator('#radar-list [data-action=onboarding]').count(), 0, 'sin llamado a acción al terminar');
+      eq(errors, [], 'errores de consola');
+      await ctx.close();
+    });
+
+    await test('T1.4 onboarding de un ítem por km guarda el contador', async () => {
+      const { ctx, page, errors } = await openDemo(browser, base);
+      await page.evaluate(() => window.__garage.openOnboarding('bujias'));
+      await page.locator('#ob-km').fill('210000');
+      await page.locator('#ob-save').click();
+      await page.locator('#ob-form').waitFor({ state: 'detached' });
+      await settle(page);
+      const a = await page.evaluate(() => { const g = window.__garage; const x = g.computeAlerts(g.derive()).find(a => a.id === 'bujias'); return [g.state.settings.ultimoBujiasKm, x.st, x.kmPart?.target]; });
+      eq(a, [210000, 'green', 225000], 'bujías configurado sin cargas registradas');
+      eq(errors, [], 'errores de consola');
+      await ctx.close();
+    });
+
+    await test('T1.5 Resumen lista todos los rojos y amarillos', async () => {
+      const { ctx, page, errors } = await openDemo(browser, base);
+      await goTab(page, 'resumen');
+      await saveSettings(page, {
+        vencimientos: { vtv: '2026-10-01', oblea: '2026-11-01', pruebaHidraulica: '2026-11-20', seguro: '2026-11-25' },   // 2 rojos, 2 amarillos
+        pendientes: { bateria: '2026-11-05', luces: '2026-11-05' },                                                    // 2 rojos ("no sé")
+        ultimoPresionFecha: '2026-09-01',                                                                               // 1 rojo
+        ultimoProfundidadFecha: '2025-11-20', ultimoMatafuegoFecha: '2025-11-25',                                       // 2 amarillos
+        ultimoAlineacionFecha: '2026-06-01', ultimoEscobillasFecha: '2026-06-01'                                        // 2 al día
+      });
+      await settle(page);
+      const rows = await rowStates(page, '#next-list > .alert');
+      eq({ red: rows.filter(r => r[1] === 'red').length, yellow: rows.filter(r => r[1] === 'yellow').length, other: rows.filter(r => !['red', 'yellow'].includes(r[1])).length },
+        { red: 5, yellow: 4, other: 0 }, 'filas visibles en Resumen');
+      eq(await page.locator('#next-ok summary').textContent(), '2 al día', 'línea "N al día"');
+      eq(await page.locator('#next-ok').getAttribute('open'), null, '"al día" colapsado');
+      await page.locator('#next-list [data-action=onboarding]').click();
+      await page.locator('#ob-form').waitFor({ state: 'visible' });
+      await page.locator('#ob-form [data-modal-close]').click();
+      await page.locator('#ob-form').waitFor({ state: 'detached' });
+      // Sin ítems sin configurar no hay llamado a acción.
+      await page.evaluate(() => { const g = window.__garage; return g.store.saveSettings({ noAplica: Object.fromEntries(g.computeAlerts(g.derive()).filter(a => a.st === 'none').map(a => [a.id, true])) }); });
+      await settle(page);
+      eq(await page.locator('#next-list [data-action=onboarding]').count(), 0, 'sin llamado a acción cuando no hay ítems sin configurar');
+      eq(errors, [], 'errores de consola');
+      await ctx.close();
+    });
+
+    await test('T1.6 marcar revisado reinicia sin gasto', async () => {
+      const { ctx, page, errors } = await openDemo(browser, base);
+      await goTab(page, 'vencimientos');
+      await page.evaluate(() => window.__garage.store.save('refuels', { id: 'mr', fecha: '2026-11-01T10:00:00', odometro: 214000, combustible: 'GNC', grado: null, volumen: 10, costoTotal: 7000, lleno: true, estacion: '', notas: '', origen: 'manual' }));
+      await saveSettings(page, { pendientes: { luces: '2026-11-01' }, ultimoPastillasKm: 200000, ultimoPastillasFecha: '2025-01-01', ultimoAceiteFecha: '2025-01-01' });
+      await settle(page);
+      eq(await page.locator('#radar-list .alert[data-id="aceite"] [data-action=mark-reviewed]').count(), 0, 'un service no tiene el botón');
+      eq(await page.locator('#radar-list [data-action=mark-reviewed]').count(), await page.evaluate(() => window.__garage.SERVICE_ITEMS.filter(a => a.tipo === 'inspeccion').length), 'un botón por inspección');
+      await page.locator('#radar-list .alert[data-id="luces"] [data-action=mark-reviewed]').click();
+      await page.locator('#radar-list .alert[data-id="pastillas"] [data-action=mark-reviewed]').click();
+      await settle(page);
+      const r = await page.evaluate(() => { const g = window.__garage, s = g.state.settings, A = g.computeAlerts(g.derive());
+        return { luces: A.find(a => a.id === 'luces').st, pastillas: A.find(a => a.id === 'pastillas').st, expenses: g.state.expenses.length,
+          rev: s.revisiones.luces, km: [s.ultimoPastillasKm, s.ultimoPastillasFecha] }; });
+      eq(r, { luces: 'green', pastillas: 'green', expenses: 0, rev: [{ fecha: '2026-11-05', km: 214000 }], km: [214000, '2026-11-05'] }, 'estado tras marcar revisado');
+      const sub = await page.locator('#radar-list .alert[data-id="luces"] .alert-sub').textContent();
+      assert(sub.includes('revisado el 05/11/2026'), `la fila no muestra la última revisión: "${sub}"`);
+      eq(errors, [], 'errores de consola');
+      await ctx.close();
+    });
+
+    await test('T1.7 casillas de reinicio según el tipo', async () => {
+      const { ctx, page, errors } = await openDemo(browser, base);
+      const m = await page.evaluate(() => {
+        const items = window.__garage.SERVICE_ITEMS, ids = t => items.filter(a => a.match({ tipo: t })).map(a => a.id);
+        return Object.fromEntries(['Cambio de aceite', 'Rotar neumáticos', 'Neumáticos - Alineación', 'Bujías', 'Control de pérdidas GNC', 'Carga de GNC', 'Filtro de aire de la cabina', 'Aceite de caja', 'Lavadero'].map(t => [t, ids(t)]));
+      });
+      eq(m, { 'Cambio de aceite': ['aceite'], 'Rotar neumáticos': ['rotacion'], 'Neumáticos - Alineación': ['alineacion'], 'Bujías': ['bujias'],
+        'Control de pérdidas GNC': ['gnc'], 'Carga de GNC': [], 'Filtro de aire de la cabina': ['filtroHabitaculo'], 'Aceite de caja': ['aceiteCaja'], 'Lavadero': [] }, 'tipo → contadores');
+      await page.locator('#fab').click();
+      await page.locator('[data-action=quick-expense]').click();
+      await page.locator('#gx-tipo').fill('Cambio de aceite');
+      const shown = await page.$$eval('#gx-resets [data-reset]', els => els.filter(e => !e.hidden).map(e => [e.dataset.reset, e.querySelector('input').checked]));
+      eq(shown, [['aceite', true]], 'casillas visibles para "Cambio de aceite"');
+      eq(errors, [], 'errores de consola');
+      await ctx.close();
+    });
+
+    await test('T1.7 editar gasto viejo no retrocede contador', async () => {
+      const { ctx, page, errors } = await openDemo(browser, base);
+      await goTab(page, 'gastos');
+      await page.evaluate(async () => {
+        const g = window.__garage;
+        await g.store.writeMany('expenses', [
+          { id: 'old', fecha: '2024-11-01T10:00:00', odometro: 180000, categoria: 'PREVENTIVO', tipo: 'Cambio de aceite', descripcion: '', monto: 50000, local: '', grupoId: null, origen: 'manual' },
+          { id: 'new', fecha: '2026-10-01T10:00:00', odometro: 212000, categoria: 'PREVENTIVO', tipo: 'Cambio de aceite', descripcion: '', monto: 90000, local: '', grupoId: null, origen: 'manual' }]);
+        await g.store.saveSettings({ ultimoAceiteKm: 212000, ultimoAceiteFecha: '2026-10-01' });
+      });
+      await settle(page);
+      const counter = () => page.evaluate(() => { const s = window.__garage.state.settings; return [s.ultimoAceiteKm, s.ultimoAceiteFecha]; });
+      // Editar el gasto de hace 2 años tildando la casilla del aceite.
+      await page.locator('[data-action=edit-expense][data-id=old]').click();
+      const box = page.locator('#gx-resets [data-reset=aceite] input');
+      eq(await box.isChecked(), false, 'al editar, la casilla arranca destildada');
+      await box.check();
+      await page.locator('#gx-desc').fill('editado');
+      await page.locator('#gx-form button[type=submit]').click();
+      await page.locator('#gx-form').waitFor({ state: 'detached' });
+      await settle(page);
+      eq(await page.evaluate(() => window.__garage.state.expenses.find(e => e.id === 'old').descripcion), 'editado', 'el gasto se editó');
+      eq(await counter(), [212000, '2026-10-01'], 'contador tras editar el gasto viejo');
+      // Borrar el gasto más reciente no deja el contador por debajo de otro gasto.
+      await page.locator('[data-action=del-expense][data-id=new]').click();
+      await page.locator('#confirm-ok').click();
+      await page.waitForFunction(() => window.__garage.state.expenses.length === 1);
+      await settle(page);
+      eq(await counter(), [212000, '2026-10-01'], 'contador tras borrar el gasto más reciente');
       eq(errors, [], 'errores de consola');
       await ctx.close();
     });

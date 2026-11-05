@@ -95,11 +95,11 @@
 **Agente / Modelo:** Frontend Developer / Sonnet
 **Descripción:** En la pantalla de Vencimientos (`alertRowHTML` :1133 y su lista), agrupar los ítems por `grupo` (Neumáticos, Frenos, Suspensión, Eléctrico, Motor, Confort, Legal, GNC) con encabezado y conteo de rojos/amarillos. Los ítems "no aplica" se ocultan. Orden dentro del grupo: rojo, amarillo, verde, sin configurar.
 **Criterios de aceptación:**
-- [ ] Se ven 8 grupos con encabezado.
-- [ ] Un ítem marcado "no aplica" no aparece en ninguna lista.
-- [ ] El orden por urgencia se mantiene dentro de cada grupo.
+- [x] Se ven 8 grupos con encabezado.
+- [x] Un ítem marcado "no aplica" no aparece en ninguna lista.
+- [x] El orden por urgencia se mantiene dentro de cada grupo.
 **Verificación:**
-- [ ] `node tests/smoke.mjs` (caso: "grupos presentes y 'no aplica' oculto")
+- [x] `node tests/smoke.mjs` (caso: "grupos presentes y 'no aplica' oculto")
 - [ ] Revisión manual: en iPhone, la pantalla se lee sin scroll infinito y los encabezados son legibles.
 **Dependencias:** T1.2
 **Archivos probables:** `index.html`
@@ -109,12 +109,12 @@
 **Agente / Modelo:** Frontend Developer / Sonnet
 **Descripción:** Flujo (modal con `openModal`) que recorre los ítems sin historial y pregunta por cada uno: "última vez (fecha/km)", "no sé, revisar ya" (queda vencido para forzar la revisión) o "no aplica". Debe poder retomarse y salir en cualquier momento. Guarda en el contador del ítem sin crear gastos.
 **Criterios de aceptación:**
-- [ ] Tras completar el onboarding, ningún ítem queda en "SIN CONFIGURAR".
-- [ ] "No sé" deja el ítem en rojo; "no aplica" lo oculta.
-- [ ] Se puede cerrar a mitad y retomar sin perder lo ya cargado.
-- [ ] No se crean gastos.
+- [x] Tras completar el onboarding, ningún ítem queda en "SIN CONFIGURAR".
+- [x] "No sé" deja el ítem en rojo; "no aplica" lo oculta.
+- [x] Se puede cerrar a mitad y retomar sin perder lo ya cargado.
+- [x] No se crean gastos.
 **Verificación:**
-- [ ] `node tests/smoke.mjs` (caso: "onboarding completo deja 0 ítems sin configurar")
+- [x] `node tests/smoke.mjs` (caso: "onboarding completo deja 0 ítems sin configurar")
 - [ ] Revisión manual: en iPhone, recorrer 5 ítems con el teclado numérico sin que se tape el botón.
 **Dependencias:** T1.3
 **Archivos probables:** `index.html`
@@ -124,11 +124,11 @@
 **Agente / Modelo:** Frontend Developer / Sonnet
 **Descripción:** En Resumen (:1182) quitar `.slice(0,3)` y mostrar todos los rojos y amarillos, más una línea "N al día" colapsada. Si hay ítems sin configurar, mostrar un llamado a acción que abre el onboarding de T1.4.
 **Criterios de aceptación:**
-- [ ] Con 5 rojos y 4 amarillos en el demo, Resumen los muestra a los 9.
-- [ ] Aparece "N al día" con el conteo correcto.
-- [ ] El llamado a acción solo aparece si hay ítems sin configurar y abre el onboarding.
+- [x] Con 5 rojos y 4 amarillos en el demo, Resumen los muestra a los 9.
+- [x] Aparece "N al día" con el conteo correcto.
+- [x] El llamado a acción solo aparece si hay ítems sin configurar y abre el onboarding.
 **Verificación:**
-- [ ] `node tests/smoke.mjs` (caso: "Resumen lista todos los rojos y amarillos")
+- [x] `node tests/smoke.mjs` (caso: "Resumen lista todos los rojos y amarillos")
 - [ ] Revisión manual: en iPhone, Resumen no queda abrumador con muchos rojos.
 **Dependencias:** T1.4
 **Archivos probables:** `index.html` (:1182)
@@ -138,11 +138,11 @@
 **Agente / Modelo:** Frontend Developer / Sonnet
 **Descripción:** Para ítems de tipo inspección, agregar el botón "Marcar revisado" que reinicia el contador del ítem a hoy y al km actual sin crear un gasto, registrando el evento (fecha, km, ítem) en un historial liviano. Hoy las inspecciones solo se reinician registrando un gasto.
 **Criterios de aceptación:**
-- [ ] El botón aparece solo en ítems tipo inspección.
-- [ ] Al tocarlo, el ítem pasa a verde y no se crea ningún gasto.
-- [ ] El evento queda registrado y se puede ver la fecha de la última revisión.
+- [x] El botón aparece solo en ítems tipo inspección.
+- [x] Al tocarlo, el ítem pasa a verde y no se crea ningún gasto.
+- [x] El evento queda registrado y se puede ver la fecha de la última revisión.
 **Verificación:**
-- [ ] `node tests/smoke.mjs` (caso: "marcar revisado reinicia sin gasto")
+- [x] `node tests/smoke.mjs` (caso: "marcar revisado reinicia sin gasto")
 - [ ] Revisión manual: en iPhone, el botón se alcanza con el pulgar y confirma con un toast.
 **Dependencias:** T1.3
 **Archivos probables:** `index.html`
@@ -152,11 +152,11 @@
 **Agente / Modelo:** Frontend Developer / Sonnet
 **Descripción:** En el formulario de gasto, mostrar solo las casillas de reinicio que coinciden con el tipo (`match`). Corregir `serviceCounters` (:1058) para que nunca retroceda un contador al editar o borrar un gasto viejo: usar el máximo entre el contador actual y el recalculado.
 **Criterios de aceptación:**
-- [ ] Un gasto de tipo "Cambio de aceite" solo ofrece la casilla del aceite.
-- [ ] Editar un gasto de hace 2 años con la casilla tildada no baja el contador.
-- [ ] Borrar un gasto no deja un contador por debajo de otro más reciente.
+- [x] Un gasto de tipo "Cambio de aceite" solo ofrece la casilla del aceite.
+- [x] Editar un gasto de hace 2 años con la casilla tildada no baja el contador.
+- [x] Borrar un gasto no deja un contador por debajo de otro más reciente.
 **Verificación:**
-- [ ] `node tests/smoke.mjs` (caso: "editar gasto viejo no retrocede contador")
+- [x] `node tests/smoke.mjs` (caso: "editar gasto viejo no retrocede contador")
 - [ ] Revisión manual: en iPhone, editar un gasto antiguo y confirmar que las alertas no cambian.
 **Dependencias:** T1.2
 **Archivos probables:** `index.html` (:1058), `tests/smoke.mjs`

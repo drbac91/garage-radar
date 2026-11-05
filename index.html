@@ -252,6 +252,16 @@ button.alert{cursor:pointer}
 .sheet-foot{display:flex;gap:10px;justify-content:flex-end;margin-top:6px;flex-wrap:wrap}
 .check{display:flex;gap:10px;align-items:center;font-size:14px}
 .check input{width:20px;height:20px;accent-color:var(--green)}
+.alert-actions{grid-column:1/-1;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;margin-top:-2px}
+.alert-actions .btn{min-height:40px}
+.rgroup .group-head{padding:12px}
+.rgroup .grp-count{font-size:12px;font-weight:800;color:var(--muted);white-space:nowrap}
+.rgroup .grp-count b[data-s=red]{color:var(--red)}.rgroup .grp-count b[data-s=yellow]{color:var(--yellow)}
+.rgroup .group-body{padding:0 8px 8px}
+.ob-meta{margin:0;color:var(--muted);font-size:13px}
+.ob-progress{font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.ob-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.ob-actions .btn-primary{grid-column:1/-1}
 .st-group{font-size:12px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;color:var(--blue);margin-top:8px}
 .tbl{width:100%;border-collapse:collapse;font-size:13.5px}
 .tbl th{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);text-align:left;padding:6px 6px 6px 0}
@@ -692,7 +702,7 @@ const state = {
   user: null, refuels: [], expenses: [], settings: {},
   loaded: { refuels: false, expenses: false, settings: false },
   online: navigator.onLine, pending: false,
-  ui: { fuel: 'GNC', cat: 'ALL', fuelLimit: 15, gxLimit: 20, expanded: new Set(), editRefuel: null, lleno: true, flOrder: [], flPre: null, flFuel: 'GNC', flArmed: null, tab: 'resumen' }
+  ui: { fuel: 'GNC', cat: 'ALL', fuelLimit: 15, gxLimit: 20, expanded: new Set(), editRefuel: null, lleno: true, flOrder: [], flPre: null, flFuel: 'GNC', flArmed: null, tab: 'resumen', grpOpen: new Map() }
 };
 let store = null;       // almacén activo (memoria o Firestore)
 let unsubs = [];
@@ -1202,7 +1212,7 @@ function renderHeader(D) {
 function alertRowHTML(a) {
   const unitStr = { red: 'VENCIDA', yellow: 'PRÓXIMA', green: 'AL DÍA', none: 'SIN CONFIGURAR' };
   let sub = esc(a.sub), big = '—', badge = unitStr.none;
-  if (a.st !== 'none') {
+  if (a.st !== 'none' && !a.pending) {
     badge = a.kind === 'date' ? unitStr[a.st] : { red: 'ATRASADO', yellow: 'PRÓXIMO', green: 'AL DÍA' }[a.st];
     const whenTxt = d => d > 0 ? `en ${nf(d)} días` : d === 0 ? 'vence hoy' : `venció hace ${nf(-d)} días`;
     if (a.kind === 'date') {
@@ -1216,19 +1226,39 @@ function alertRowHTML(a) {
       big = a.main.by === 'km' ? `${nf(a.main.rem)}<small>km</small>` : `${nf(a.main.days)}<small>días</small>`;
     }
   }
-  const tag = a.st === 'none' ? 'button' : 'div';
-  const attrs = a.st === 'none' ? ' type="button" data-action="open-settings"' : '';
-  return `<${tag} class="alert" data-s="${a.st}"${attrs}>
+  if (a.pending) { sub = 'Sin dato: revisalo y cargá la última vez'; big = '!'; badge = 'REVISAR'; }
+  if (a.lastReview) sub += ` · revisado el ${fmtDate(a.lastReview.fecha)}`;
+  const acts = [];
+  if (a.st === 'none' || a.pending) acts.push(`<button class="btn btn-ghost btn-sm" type="button" data-action="onboard-one" data-id="${esc(a.id)}">${a.kind === 'date' ? 'Cargar fecha' : 'Cargar última vez'}</button>`);
+  if (a.tipo === 'inspeccion') acts.push(`<button class="btn btn-ghost btn-sm" type="button" data-action="mark-reviewed" data-id="${esc(a.id)}">${icon('check', 16)}Marcar revisado</button>`);
+  return `<div class="alert" data-s="${a.st}" data-id="${esc(a.id)}">
     <div class="alert-ico">${icon(a.icon, 22)}</div>
     <div style="min-width:0"><div class="alert-name">${esc(a.label)}</div><div class="alert-sub">${sub}</div></div>
     <div class="alert-right"><div class="alert-big num font-black">${big}</div><span class="badge">${badge}</span></div>
-  </${tag}>`;
+    ${acts.length ? `<div class="alert-actions">${acts.join('')}</div>` : ''}
+  </div>`;
 }
+const GROUP_ICONS = { 'Neumáticos': 'wrench', 'Frenos': 'shield', 'Suspensión': 'gear', 'Eléctrico': 'bolt', 'Motor': 'gear', 'Confort': 'drop', 'Legal': 'doc', 'GNC': 'flame' };
+const unconfigured = A => A.filter(a => a.st === 'none');
+const onboardCTA = A => { const n = unconfigured(A).length;
+  return n ? `<button class="btn btn-primary btn-block" type="button" data-action="onboarding">${icon('clipboard', 16)}Cargar la última vez de ${nf(n)} ${n === 1 ? 'ítem' : 'ítems'} sin datos</button>` : ''; };
 
 function renderRadar(D) {
   const box = $('#radar-list');
   if (!allLoaded()) { box.innerHTML = skeleton(4); return; }
-  box.innerHTML = computeAlerts(D).map(alertRowHTML).join('');
+  const A = computeAlerts(D);
+  box.innerHTML = onboardCTA(A) + GROUPS.map(g => {
+    const its = A.filter(a => a.grupo === g);   // ya vienen ordenados: rojo, amarillo, verde, sin configurar
+    if (!its.length) return '';
+    const red = its.filter(a => a.st === 'red').length, yel = its.filter(a => a.st === 'yellow').length;
+    const open = state.ui.grpOpen.has(g) ? state.ui.grpOpen.get(g) : red + yel > 0;
+    const count = [red && `<b data-s="red">${nf(red)} ${red === 1 ? 'vencido' : 'vencidos'}</b>`, yel && `<b data-s="yellow">${nf(yel)} ${yel === 1 ? 'próximo' : 'próximos'}</b>`].filter(Boolean).join(' · ') || `${nf(its.length)} ${its.length === 1 ? 'ítem' : 'ítems'}`;
+    return `<div class="group rgroup" data-grupo="${esc(g)}">
+      <button class="group-head" type="button" data-action="toggle-grp" data-grupo="${esc(g)}" aria-expanded="${open}">
+        <span style="color:var(--muted)">${icon(GROUP_ICONS[g] || 'gear', 18)}</span><h3 class="alert-name" style="margin:0;font-size:15px">${esc(g)}</h3>
+        <span class="grp-count">${count}</span><span class="chev">${icon('chev', 18)}</span></button>
+      <div class="group-body alerts" ${open ? '' : 'hidden'}>${its.map(alertRowHTML).join('')}</div></div>`;
+  }).join('');
 }
 
 function renderResumen(D) {
@@ -1247,8 +1277,10 @@ function renderResumen(D) {
       <div class="tile"><div class="tile-label">Combustible</div><div class="tile-val num">${money(D.fuelTotal)}</div><div class="tile-sub">${state.refuels.length} cargas</div></div>
       <div class="tile"><div class="tile-label">Otros gastos</div><div class="tile-val num">${money(D.otherTotal)}</div><div class="tile-sub">${state.expenses.length} ítems</div></div>
     </div>`;
-  const all = computeAlerts(D), set = all.filter(a => a.st !== 'none');
-  next.innerHTML = (set.length ? set : all).slice(0, 3).map(alertRowHTML).join('');
+  const A = computeAlerts(D), hot = A.filter(a => a.st === 'red' || a.st === 'yellow'), ok = A.filter(a => a.st === 'green');
+  next.innerHTML = onboardCTA(A)
+    + (hot.length ? hot.map(alertRowHTML).join('') : '<div class="empty">Nada vencido ni próximo a vencer.</div>')
+    + (ok.length ? `<details class="more-info" id="next-ok"><summary>${nf(ok.length)} al día</summary><div class="alerts" style="margin-top:10px">${ok.map(alertRowHTML).join('')}</div></details>` : '');
 }
 
 function renderPassport(D) {
@@ -1675,7 +1707,8 @@ function openExpenseModal(existing) {
       <div class="field"><label for="gx-desc">Descripción (opcional)</label><input id="gx-desc" maxlength="200" value="${esc(it.descripcion || '')}"></div>
       <div class="field"><label for="gx-local">Local (opcional)</label><input id="gx-local" maxlength="80" value="${esc(it.local || '')}"></div>
       <div id="gx-resets" class="stack">
-        ${SERVICE_ITEMS.map((a, i) => `<label class="check"><input type="checkbox" id="gx-r-${i}"> Reinicia contador de ${esc(a.label.toLowerCase())}</label>`).join('')}
+        ${SERVICE_ITEMS.map((a, i) => `<label class="check" data-reset="${esc(a.id)}" hidden><input type="checkbox" id="gx-r-${i}"> Reinicia contador de ${esc(a.label.toLowerCase())}</label>`).join('')}
+        <p class="help" id="gx-r-none" style="margin:0" hidden>Ningún contador coincide con este tipo. Para reiniciar uno, escribí el tipo del service (por ejemplo "Cambio de aceite").</p>
       </div>
       <p id="gx-error" class="form-error" role="alert" hidden></p>
       <div class="sheet-foot"><button class="btn btn-ghost" type="button" data-modal-close>Cancelar</button><button class="btn btn-primary" type="submit">${existing ? 'Guardar cambios' : 'Guardar gasto'}</button></div>
@@ -1684,13 +1717,21 @@ function openExpenseModal(existing) {
   const toggleResets = () => { $('#gx-resets', el).hidden = $('#gx-cat', el).value !== 'PREVENTIVO'; };
   $('#gx-cat', el).addEventListener('change', toggleResets); toggleResets();
   // Al escribir el tipo se tildan solos los contadores que ese service reinicia (se puede destildar).
-  $('#gx-tipo', el).addEventListener('input', () => SERVICE_ITEMS.forEach((a, i) => { $('#gx-r-' + i, el).checked = a.match({ tipo: $('#gx-tipo', el).value }); }));
+  // Solo se ofrecen las casillas cuyo `match` coincide con el tipo. En un gasto nuevo se tildan solas (se pueden destildar);
+  // al editar uno existente arrancan destildadas para no reiniciar contadores por accidente.
+  const syncResets = check => {
+    const tipo = $('#gx-tipo', el).value; let any = false;
+    SERVICE_ITEMS.forEach((a, i) => { const m = a.match({ tipo }), lb = $(`[data-reset="${a.id}"]`, el); lb.hidden = !m; any = any || m;
+      const cb = $('#gx-r-' + i, el); if (!m) cb.checked = false; else if (check) cb.checked = true; });
+    $('#gx-r-none', el).hidden = any || !tipo.trim();
+  };
+  $('#gx-tipo', el).addEventListener('input', () => syncResets(true)); syncResets(!existing);
   $('#gx-form', el).addEventListener('submit', async ev => {
     ev.preventDefault();
     const err = m => { const p = $('#gx-error', el); p.textContent = m; p.hidden = !m; return false; };
     const fecha = $('#gx-fecha', el).value, monto = parseNum($('#gx-monto', el).value), odoRaw = $('#gx-odo', el).value.trim();
     const odo = odoRaw ? parseKm(odoRaw) : null, cat = $('#gx-cat', el).value;
-    const resets = cat === 'PREVENTIVO' ? SERVICE_ITEMS.filter((a, i) => $('#gx-r-' + i, el).checked) : [];
+    const resets = cat === 'PREVENTIVO' ? SERVICE_ITEMS.filter((a, i) => $('#gx-r-' + i, el).checked && a.match({ tipo: $('#gx-tipo', el).value })) : [];
     if (!isValidDate(fecha)) return err('Ingresá una fecha válida.');
     if (!Number.isFinite(monto) || monto < 0) return err('Ingresá un monto válido.');
     if (odoRaw && !(odo > 0)) return err('El odómetro debe ser un número mayor a 0.');
@@ -1702,7 +1743,12 @@ function openExpenseModal(existing) {
       grupoId: existing?.grupoId || null, origen: existing?.origen || 'manual'
     });
     const patch = {};
-    for (const a of resets) { if (a.km) patch[a.key] = odo; patch[a.fkey] = fecha; }
+    // Los contadores nunca retroceden: editar o cargar un gasto viejo no pisa un service más reciente.
+    const cur = state.settings || {};
+    for (const a of resets) {
+      if (a.km && odo > (Number.isFinite(cur[a.key]) ? cur[a.key] : 0)) patch[a.key] = odo;
+      if (fecha > datePart(cur[a.fkey])) patch[a.fkey] = fecha;
+    }
     if (Object.keys(patch).length) await store.saveSettings(patch);
     closeModal(true); toast(existing ? 'Gasto actualizado.' : 'Gasto registrado.', 'ok');
   });
@@ -1768,6 +1814,62 @@ function openSettingsModal() {
     patch.noAplica = Object.fromEntries($$('[data-noaplica]', el).map(c => [c.dataset.noaplica, c.checked]));
     await store.saveSettings(patch); closeModal(true); toast('Configuración guardada.', 'ok');
   });
+}
+
+/* ---- Carga inicial (onboarding): última vez de cada ítem sin datos ---- */
+// Recorre los ítems sin datos de a uno. Cada respuesta se guarda en el momento, así que se puede salir y retomar.
+// `done` guarda lo respondido en esta sesión: en Firestore la escritura no se espera y el snapshot puede llegar tarde.
+function openOnboarding(onlyId = null) {
+  const done = new Set();
+  const queue = () => computeAlerts(derive()).filter(a => !done.has(a.id) && (onlyId ? a.id === onlyId && (a.st === 'none' || a.pending) : a.st === 'none'));
+  const total = queue().length;
+  const step = () => {
+    const q = queue(), a = q[0];
+    if (!a) { if (modal) closeModal(true); if (done.size) toast(onlyId ? 'Dato guardado.' : 'Listo: todos los ítems tienen un dato.', 'ok'); renderAll(); return; }
+    const isDate = a.kind === 'date', s = state.settings || {};
+    const src = a.fuente === PRACTICA ? 'Práctica de taller (sin fuente oficial)' : /^https?:/.test(a.fuente || '') ? `<a href="${esc(a.fuente)}" target="_blank" rel="noopener noreferrer">Fuente</a>` : esc(a.fuente || '');
+    const el = openModal({ title: onlyId ? a.label : 'Carga inicial', focus: isDate ? '#ob-fecha' : (a.km ? '#ob-km' : '#ob-fecha'), body: `
+      <form id="ob-form" class="sheet-body" novalidate autocomplete="off">
+        ${onlyId ? '' : `<div class="ob-progress">Ítem ${nf(total - q.length + 1)} de ${nf(total)} · ${esc(a.grupo)}</div><div class="alert-name" style="font-size:18px">${esc(a.label)}</div>`}
+        <p class="ob-meta">${esc(a.sub)}${a.motivo ? ` · ${esc(a.motivo)}` : ''}${a.kind === 'service' ? `<br>${src}` : ''}</p>
+        ${isDate ? `<div class="field"><label for="ob-fecha">Fecha de vencimiento</label><input id="ob-fecha" type="date"></div>`
+          : `<div class="grid-2">${a.km ? `<div class="field"><label for="ob-km">Km de la última vez</label><input id="ob-km" class="big num" inputmode="numeric" enterkeyhint="done" placeholder="${nf(kmRef(derive()) || 200000)}"></div>` : ''}
+             <div class="field"><label for="ob-fecha">Fecha de la última vez</label><input id="ob-fecha" type="date" max="${todayISO()}"></div></div>`}
+        <p id="ob-error" class="form-error" role="alert" hidden></p>
+        <div class="ob-actions">
+          <button class="btn btn-primary" type="submit" id="ob-save">${onlyId ? 'Guardar' : 'Guardar y seguir'}</button>
+          <button class="btn btn-ghost" type="button" id="ob-unknown">No sé, revisar ya</button>
+          <button class="btn btn-ghost" type="button" id="ob-na">No aplica</button>
+        </div>
+        <div class="sheet-foot"><button class="btn btn-ghost" type="button" data-modal-close>${onlyId ? 'Cancelar' : 'Salir (sigue después)'}</button></div>
+      </form>` });
+    const err = m => { const p = $('#ob-error', el); p.textContent = m; p.hidden = !m; };
+    const answer = async patch => { done.add(a.id); await store.saveSettings(patch); step(); };
+    $('#ob-form', el).addEventListener('submit', ev => {
+      ev.preventDefault();
+      const fecha = $('#ob-fecha', el).value, kmRaw = a.km && !isDate ? $('#ob-km', el).value.trim() : '', km = kmRaw ? parseKm(kmRaw) : null;
+      if (fecha && !isValidDate(fecha)) return err('Ingresá una fecha válida.');
+      if (kmRaw && !(km > 0)) return err('El km debe ser un número mayor a 0.');
+      if (isDate) return fecha ? answer({ vencimientos: { [a.key]: fecha } }) : err('Ingresá la fecha o elegí "No sé".');
+      if (!km && !(fecha && a.meses)) return err(a.km && !a.meses ? 'Ingresá el km de la última vez o elegí "No sé".' : 'Ingresá la fecha o el km de la última vez, o elegí "No sé".');
+      answer({ ...(km ? { [a.key]: km } : {}), ...(fecha ? { [a.fkey]: fecha } : {}), pendientes: { [a.id]: false } });
+    });
+    $('#ob-unknown', el).addEventListener('click', () => answer({ pendientes: { [a.id]: todayISO() } }));
+    $('#ob-na', el).addEventListener('click', () => answer({ noAplica: { [a.id]: true } }));
+  };
+  step();
+}
+
+// Inspecciones: reinicia el contador a hoy (y al km actual si se conoce) sin crear un gasto, y registra el evento.
+async function markReviewed(id) {
+  const a = SERVICE_ITEMS.find(x => x.id === id);
+  if (!a || a.tipo !== 'inspeccion') return;
+  const s = state.settings || {}, km = kmRef(derive(), s), fecha = todayISO();
+  const prev = ((s.revisiones || {})[id] || []).filter(r => r && r.fecha);
+  const patch = { [a.fkey]: fecha, revisiones: { [id]: [{ fecha, km: km || null }, ...prev].slice(0, 10) }, pendientes: { [id]: false } };
+  if (a.km && km && km >= (s[a.key] || 0)) patch[a.key] = km;
+  await store.saveSettings(patch);
+  toast(`${a.label}: revisado hoy.`, 'ok');
 }
 
 /* ---- Vista previa de importación ---- */
@@ -1841,6 +1943,11 @@ const actions = {
   'toggle-group': el => { const k = el.dataset.key; state.ui.expanded.has(k) ? state.ui.expanded.delete(k) : state.ui.expanded.add(k); renderExpenses(); },
   'more-expenses': () => { state.ui.gxLimit += 20; renderExpenses(); },
   'open-settings': () => openSettingsModal(),
+  onboarding: () => openOnboarding(),
+  'onboard-one': el => openOnboarding(el.dataset.id),
+  'mark-reviewed': el => markReviewed(el.dataset.id),
+  'toggle-grp': el => { const g = el.dataset.grupo, open = el.getAttribute('aria-expanded') !== 'true'; state.ui.grpOpen.set(g, open);
+    el.setAttribute('aria-expanded', String(open)); el.nextElementSibling.hidden = !open; },
   export: () => exportBackup(),
   import: () => { const f = $('#file-import'); f.value = ''; f.click(); }
 };
@@ -1902,7 +2009,7 @@ async function boot() {
   if (DEMO) {
     store = createMemoryStore();
     window.__garage = { state, store, derive, buildDrivvoPlan, buildJsonPlan, computeAlerts, serviceCounters,
-      parseCSV, finishPlan, executePlan, showPlanPreview, migrateSettings, SERVICE_ITEMS, DATE_ALERTS, GROUPS };   // solo para pruebas locales (tests/smoke.mjs)
+      parseCSV, finishPlan, executePlan, showPlanPreview, migrateSettings, SERVICE_ITEMS, DATE_ALERTS, GROUPS, openOnboarding, markReviewed, kmRef };   // solo para pruebas locales (tests/smoke.mjs)
     enterApp({ uid: 'demo', email: 'demo@local' });
     return;
   }
