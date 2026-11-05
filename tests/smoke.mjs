@@ -48,6 +48,7 @@ async function openDemo(browser, base) {
   page.on('console', m => { if (m.type() === 'error') errors.push(`console.error: ${m.text()}`); });
   page.on('pageerror', e => errors.push(`pageerror: ${e.message}`));
   await page.clock.setFixedTime(new Date(TODAY));
+  await page.addInitScript(() => { window.gx = k => document.querySelector('#gx-' + k)?.value ?? null; });
   await page.goto(base + '/index.html?demo=1');
   await page.waitForFunction(() => {
     const g = window.__garage; return g && g.state.loaded.refuels && g.state.loaded.expenses && g.state.loaded.settings;
@@ -439,6 +440,84 @@ async function main() {
       await settle(page);
       eq(await page.locator('#radar-list .alert[data-id="kitSeguridad"]').count(), 0, '"no aplica" tildado en Configurar oculta el ítem');
       eq(await page.evaluate(() => window.__garage.state.settings.noAplica), { escape: true, kitSeguridad: true }, 'mapa noAplica');
+      eq(errors, [], 'errores de consola');
+      await ctx.close();
+    });
+
+    await test('Tocar la alerta del seguro registra el pago con el monto anterior y lo vincula', async () => {
+      const { ctx, page, errors } = await openDemo(browser, base);
+      await goTab(page, 'resumen');
+      await page.evaluate(() => window.__garage.store.writeMany('expenses', [
+        { id: 'sg1', fecha: '2026-09-10T10:00:00', odometro: null, categoria: 'TRAMITES', tipo: 'Seguro Automotor', descripcion: '', monto: 55000, local: 'Aseguradora Ficticia', grupoId: null, origen: 'drivvo' },
+        { id: 'sg2', fecha: '2026-10-10T10:00:00', odometro: null, categoria: 'TRAMITES', tipo: 'Seguro Automotor', descripcion: '', monto: 59000, local: 'Aseguradora Ficticia', grupoId: null, origen: 'drivvo' }]));
+      await saveSettings(page, { vencimientos: { seguro: '2026-11-10' } });
+      await settle(page);
+      await page.locator('#next-list .alert[data-id="seguro"] .alert-name').click();
+      await page.locator('#gx-form').waitFor({ state: 'visible' });
+      const f = await page.evaluate(() => ({ title: document.querySelector('#m-title').textContent, monto: gx('monto'), cat: gx('cat'), tipo: gx('tipo'), local: gx('local'), next: gx('next'),
+        last: document.querySelector('#gx-last').textContent }));
+      eq({ ...f, last: undefined }, { title: 'Registrar · Seguro', monto: '59000', cat: 'TRAMITES', tipo: 'Seguro Automotor', local: 'Aseguradora Ficticia', next: '2026-12-10', last: undefined }, 'formulario precargado');
+      assert(/59\.000/.test(f.last) && f.last.includes('10/10/2026'), `no muestra el pago anterior: "${f.last}"`);
+      await page.locator('#gx-monto').fill('63000');
+      await page.locator('#gx-form button[type=submit]').click();
+      await page.locator('#gx-form').waitFor({ state: 'detached' });
+      await settle(page);
+      const r = await page.evaluate(() => { const g = window.__garage, e = g.state.expenses.find(x => !['sg1', 'sg2'].includes(x.id));
+        return { monto: e.monto, fecha: e.fecha.slice(0, 10), vinculo: e.vencimientoId, cat: e.categoria, venc: g.state.settings.vencimientos.seguro,
+          st: g.computeAlerts(g.derive()).find(a => a.id === 'seguro').st, last: g.lastExpenseFor(g.DATE_ALERTS.find(a => a.id === 'seguro')).monto }; });
+      eq(r, { monto: 63000, fecha: '2026-11-05', vinculo: 'seguro', cat: 'TRAMITES', venc: '2026-12-10', st: 'green', last: 63000 }, 'pago registrado y vencimiento adelantado');
+      await goTab(page, 'gastos');
+      assert((await page.locator('#gx-history .tag.ok').allTextContents()).includes('Seguro'), 'la lista de gastos no muestra el vínculo con la alerta');
+      eq(errors, [], 'errores de consola');
+      await ctx.close();
+    });
+
+    await test('Cada alerta abre su gasto: services con su casilla tildada y vencimientos con el próximo', async () => {
+      const { ctx, page, errors } = await openDemo(browser, base);
+      const bad = await page.evaluate(() => {
+        const g = window.__garage, out = [];
+        for (const a of g.computeAlerts(g.derive())) {
+          g.openAlertExpense(a.id);
+          const title = document.querySelector('#m-title')?.textContent, next = document.querySelector('#gx-next');
+          if (title !== `Registrar · ${a.label}`) out.push(`${a.id}: título "${title}"`);
+          if (a.tipo === 'fecha') { if (!next || !next.value) out.push(`${a.id}: sin próximo vencimiento`); }
+          else {
+            const lb = document.querySelector(`#gx-resets [data-reset="${a.id}"]`);
+            if (!lb || lb.hidden || !lb.querySelector('input').checked) out.push(`${a.id}: casilla de reinicio no tildada`);
+            if (!a.match({ tipo: a.label })) out.push(`${a.id}: el nombre no coincide con su propio match`);
+          }
+          document.querySelector('[data-modal-close]').click();
+        }
+        return out;
+      });
+      eq(bad, [], 'alertas sin gasto precargado correcto');
+      // Service: tocar Aceite precarga el odómetro actual y reinicia su contador.
+      await goTab(page, 'vencimientos');
+      await page.evaluate(() => window.__garage.store.save('refuels', { id: 'ac', fecha: '2026-11-01T10:00:00', odometro: 219500, combustible: 'GNC', grado: null, volumen: 10, costoTotal: 7000, lleno: true, estacion: '', notas: '', origen: 'manual' }));
+      await saveSettings(page, { ultimoAceiteKm: 209100, ultimoAceiteFecha: '2026-02-15' });
+      await settle(page);
+      await page.locator('#radar-list .alert[data-id="aceite"] .alert-name').click();
+      await page.locator('#gx-form').waitFor({ state: 'visible' });
+      eq(await page.evaluate(() => [gx('odo'), gx('cat'), gx('tipo')]), ['219500', 'PREVENTIVO', 'Aceite y filtro de aceite'], 'service precargado');
+      await page.locator('#gx-monto').fill('90000');
+      await page.locator('#gx-form button[type=submit]').click();
+      await page.locator('#gx-form').waitFor({ state: 'detached' });
+      await settle(page);
+      eq(await page.evaluate(() => { const s = window.__garage.state.settings, e = window.__garage.state.expenses[0]; return [s.ultimoAceiteKm, s.ultimoAceiteFecha, e.vencimientoId]; }),
+        [219500, '2026-11-05', 'aceite'], 'contador del aceite reiniciado y gasto vinculado');
+      eq(errors, [], 'errores de consola');
+      await ctx.close();
+    });
+
+    await test('El vínculo gasto → alerta sobrevive al respaldo JSON', async () => {
+      const { ctx, page, errors } = await openDemo(browser, base);
+      const r = await page.evaluate(() => {
+        const p = window.__garage.buildJsonPlan(JSON.stringify({ app: 'garage-radar', version: 1, settings: {}, refuels: [], expenses: [
+          { id: 'a', fecha: '2026-10-10T10:00:00', odometro: null, categoria: 'TRAMITES', tipo: 'Seguro', monto: 1, vencimientoId: 'seguro' },
+          { id: 'b', fecha: '2026-10-10T10:00:00', odometro: null, categoria: 'TRAMITES', tipo: 'Seguro', monto: 1, vencimientoId: '<img>' }] }));
+        return p.expenses.map(e => e.vencimientoId ?? null);
+      });
+      eq(r, ['seguro', null], 'vencimientoId importado (y descartado si no existe la alerta)');
       eq(errors, [], 'errores de consola');
       await ctx.close();
     });

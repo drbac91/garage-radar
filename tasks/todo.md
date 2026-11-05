@@ -204,6 +204,7 @@
 **Tamaño:** M
 
 ## T2.3: Registrar pago desde la alerta  [🔒]
+> **Ya existe una base (05/11, pedido de Bryan):** tocar cualquier alerta abre el gasto precargado con el pago anterior, propone el próximo vencimiento y guarda `vencimientoId` en el gasto (se conserva en el respaldo JSON). T2.3 lo extiende con `recurrenteId`, `periodo`, la variación % y el aviso de período duplicado; reusar `openAlertExpense` y `lastExpenseFor`.
 **Agente / Modelo:** Frontend Developer / Sonnet
 **Descripción:** Botón "Registrar pago" en la alerta del recurrente que abre un modal con el monto precargado con el último pago, la fecha de hoy y el período; al confirmar crea un gasto TRAMITES con `recurrenteId` y `periodo`. Muestra la variación % respecto del pago anterior (ej. "+8,5 %"). Reutilizar `openModal` y el alta de gastos existente.
 **Criterios de aceptación:**

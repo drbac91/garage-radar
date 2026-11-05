@@ -252,6 +252,11 @@ button.alert{cursor:pointer}
 .sheet-foot{display:flex;gap:10px;justify-content:flex-end;margin-top:6px;flex-wrap:wrap}
 .check{display:flex;gap:10px;align-items:center;font-size:14px}
 .check input{width:20px;height:20px;accent-color:var(--green)}
+.alert[data-action]{cursor:pointer;transition:transform .35s var(--spring),background-color .2s}
+.alert[data-action]:active{transform:scale(.985);transition-duration:80ms}
+.alert[data-action]:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+.gx-last{margin:0;font-size:13px;color:var(--muted);background:var(--field);border-radius:.65rem;padding:9px 11px}
+.gx-last b{color:var(--text)}
 .alert-actions{grid-column:1/-1;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;margin-top:-2px}
 .alert-actions .btn{min-height:40px}
 .rgroup .group-head{padding:12px}
@@ -500,11 +505,12 @@ const CAT_KEYS = Object.keys(CATS);
 const FUELS = { NAFTA: { unit: 'L', eff: 'km/L', color: 'var(--nafta)' }, GNC: { unit: 'm³', eff: 'km/m³', color: 'var(--gnc)' } };
 const EFF_RANGE = [3, 30];   // rango plausible de rendimiento (km por unidad)
 const DATE_ALERTS = [
-  { key: 'vtv', label: 'VTV', sub: 'Verificación Técnica Vehicular', icon: 'clipboard', grupo: 'Legal' },
-  { key: 'oblea', label: 'Oblea de GNC', sub: 'Vencimiento anual', icon: 'flame', grupo: 'GNC' },
-  { key: 'pruebaHidraulica', label: 'Prueba hidráulica del cilindro', sub: 'Cada 5 años', icon: 'cylinder', grupo: 'GNC' },
-  { key: 'seguro', label: 'Seguro', sub: 'Vencimiento de la póliza', icon: 'shield', grupo: 'Legal' }
-].map(a => ({ ...a, id: a.key, tipo: 'fecha' }));
+  { key: 'vtv', label: 'VTV', sub: 'Verificación Técnica Vehicular', icon: 'clipboard', grupo: 'Legal', renueva: 12, re: /vtv|verificacion tecnica/ },
+  { key: 'oblea', label: 'Oblea de GNC', sub: 'Vencimiento anual', icon: 'flame', grupo: 'GNC', renueva: 12, re: /oblea/ },
+  { key: 'pruebaHidraulica', label: 'Prueba hidráulica del cilindro', sub: 'Cada 5 años', icon: 'cylinder', grupo: 'GNC', renueva: 60, re: /prueba hidraulica/ },
+  { key: 'seguro', label: 'Seguro', sub: 'Vencimiento de la póliza', icon: 'shield', grupo: 'Legal', renueva: 1, re: /seguro/ }
+// `renueva`: meses que se suma al vencimiento al registrar el pago (se puede editar). `re` reconoce los gastos que lo pagan.
+].map(({ re, ...a }) => ({ ...a, id: a.key, tipo: 'fecha', match: e => re.test(norm(e.tipo)) }));
 // Catálogo de mantenimiento (ADR: tasks/adr-catalogo.md). Cada fila es un dato: vence por km, por tiempo o lo que
 // ocurra primero. Guarda en settings el odómetro (key) y la fecha (fkey) del último service o revisión; `match`
 // reconoce el tipo de gasto que lo reinicia. Intervalos para un VW Voyage 1.6 (EA111, nafta/GNC) según el taller y
@@ -1114,7 +1120,8 @@ function buildJsonPlan(text) {
   j.expenses.forEach((r, i) => {
     const odo = r.odometro === null || r.odometro === undefined || r.odometro === '' ? null : Number(r.odometro);
     const d = { id: typeof r.id === 'string' && r.id ? r.id : 'js_' + hash53(JSON.stringify(r)), fecha: String(r.fecha || ''), odometro: odo, categoria: r.categoria,
-      tipo: String(r.tipo || ''), descripcion: String(r.descripcion || ''), monto: Number(r.monto), local: String(r.local || ''), grupoId: r.grupoId || null, origen: r.origen || 'manual' };
+      tipo: String(r.tipo || ''), descripcion: String(r.descripcion || ''), monto: Number(r.monto), local: String(r.local || ''), grupoId: r.grupoId || null, origen: r.origen || 'manual',
+      ...(typeof r.vencimientoId === 'string' && alertById(r.vencimientoId) ? { vencimientoId: r.vencimientoId } : {}) };
     const err = checkExpense(d); err ? plan.rejected.push({ section: 'Expense', fila: i + 1, motivo: err }) : plan.expenses.push(d);
   });
   return finishPlan(plan);
@@ -1233,7 +1240,7 @@ function alertRowHTML(a) {
   const acts = [];
   if (a.st === 'none' || a.pending) acts.push(`<button class="btn btn-ghost btn-sm" type="button" data-action="onboard-one" data-id="${esc(a.id)}">${a.kind === 'date' ? 'Cargar fecha' : 'Cargar última vez'}</button>`);
   if (a.tipo === 'inspeccion') acts.push(`<button class="btn btn-ghost btn-sm" type="button" data-action="mark-reviewed" data-id="${esc(a.id)}">${icon('check', 16)}Marcar revisado</button>`);
-  return `<div class="alert" data-s="${a.st}" data-id="${esc(a.id)}">
+  return `<div class="alert" data-s="${a.st}" data-id="${esc(a.id)}" data-action="alert-expense" role="button" tabindex="0" aria-label="Registrar gasto de ${esc(a.label)}">
     <div class="alert-ico">${icon(a.icon, 22)}</div>
     <div style="min-width:0"><div class="alert-name">${esc(a.label)}</div><div class="alert-sub">${sub}</div></div>
     <div class="alert-right"><div class="alert-big num font-black">${big}</div><span class="badge">${badge}</span></div>
@@ -1371,7 +1378,7 @@ function renderExpenses() {
       return `<li class="item">
         <div class="item-ico" style="color:${c.color}">${icon(c.icon, 18)}</div>
         <div style="min-width:0"><div class="item-title">${esc(it.tipo || c.short)}</div>
-          <div class="item-sub"><span class="num">${fmtDate(it.fecha)}</span><span class="tag">${esc(c.short)}</span>${subLine(g, it) ? `<span>${subLine(g, it)}</span>` : ''}</div></div>
+          <div class="item-sub"><span class="num">${fmtDate(it.fecha)}</span><span class="tag">${esc(c.short)}</span>${it.vencimientoId && alertById(it.vencimientoId) ? `<span class="tag ok">${esc(alertById(it.vencimientoId).label)}</span>` : ''}${subLine(g, it) ? `<span>${subLine(g, it)}</span>` : ''}</div></div>
         <div class="item-right"><div class="item-amt num font-black">${money(it.monto)}</div></div>
         <div class="item-actions">
           <button class="icon-btn" type="button" data-action="edit-expense" data-id="${esc(it.id)}" aria-label="Editar gasto">${icon('edit', 18)}</button>
@@ -1694,12 +1701,30 @@ function openQuickAdd() {
   </div>` });
 }
 
+/* ---- Gasto desde una alerta: precargado con el pago anterior y vinculado a la alerta (trazabilidad) ---- */
+const alertById = id => DATE_ALERTS.find(a => a.id === id) || SERVICE_ITEMS.find(a => a.id === id) || null;
+// Último gasto de una alerta: los vinculados (vencimientoId) y, para el historial previo o importado, los que coinciden por tipo.
+function lastExpenseFor(a) {
+  return state.expenses.filter(e => e.vencimientoId === a.id || (!e.vencimientoId && a.match(e)))
+    .sort((x, y) => String(y.fecha).localeCompare(String(x.fecha)))[0] || null;
+}
+function openAlertExpense(id) {
+  const a = alertById(id); if (!a) return;
+  const last = lastExpenseFor(a), isDate = a.tipo === 'fecha', venc = ((state.settings || {}).vencimientos || {})[a.key];
+  const base = isDate && isValidDate(venc) ? datePart(venc) : todayISO();
+  openExpenseModal(null, { alert: a, last, next: isDate ? addMonths(base, a.renueva) : null,
+    prefill: { categoria: isDate ? 'TRAMITES' : 'PREVENTIVO', tipo: last ? last.tipo : a.label, monto: last ? last.monto : undefined,
+      local: last ? last.local : '', odometro: isDate ? null : derive().kmNow } });
+}
+
 /* ---- Gastos: modal de alta/edición ---- */
-function openExpenseModal(existing) {
-  const it = existing || {};
+function openExpenseModal(existing, ctx = null) {
+  const it = existing || (ctx && ctx.prefill) || {};
+  const link = ctx ? ctx.alert : null, last = ctx ? ctx.last : null;
   const tipos = [...new Set(state.expenses.map(e => e.tipo).filter(Boolean))].sort();
-  const el = openModal({ title: existing ? 'Editar gasto' : 'Nuevo gasto', focus: '#gx-monto', body: `
+  const el = openModal({ title: existing ? 'Editar gasto' : link ? `Registrar · ${link.label}` : 'Nuevo gasto', focus: '#gx-monto', body: `
     <form id="gx-form" class="sheet-body" novalidate autocomplete="off">
+      ${link ? `<p class="gx-last" id="gx-last">${last ? `Pago anterior: <b class="num">${money(last.monto)}</b> el ${esc(fmtDate(last.fecha))}${last.local ? ` · ${esc(last.local)}` : ''}. Lo precargamos; cambialo si este es distinto.` : 'No hay pagos anteriores registrados para este ítem.'}</p>` : ''}
       <div class="field"><label for="gx-monto">Monto ($ ARS)</label><input id="gx-monto" class="big num" inputmode="decimal" enterkeyhint="next" value="${it.monto !== undefined ? esc(String(it.monto).replace('.', ',')) : ''}" required></div>
       <div class="field"><label for="gx-cat">Categoría</label><select id="gx-cat">${CAT_KEYS.map(k => `<option value="${k}" ${(it.categoria || 'PREVENTIVO') === k ? 'selected' : ''}>${esc(CATS[k].label)}</option>`).join('')}</select></div>
       <div class="field"><label for="gx-tipo">Tipo</label><input id="gx-tipo" list="gx-tipos" maxlength="60" enterkeyhint="done" placeholder="Cambio de aceite, Lavadero, VTV…" value="${esc(it.tipo || '')}"><datalist id="gx-tipos">${tipos.map(t => `<option value="${esc(t)}">`).join('')}</datalist></div>
@@ -1707,6 +1732,7 @@ function openExpenseModal(existing) {
         <div class="field"><label for="gx-fecha">Fecha</label><input id="gx-fecha" type="date" value="${esc(datePart(it.fecha) || todayISO())}" required></div>
         <div class="field"><label for="gx-odo">Odómetro (opcional)</label><input id="gx-odo" class="num" inputmode="numeric" value="${Number.isFinite(it.odometro) ? it.odometro : ''}"></div>
       </div>
+      ${ctx && ctx.next ? `<div class="field"><label for="gx-next">Próximo vencimiento</label><input id="gx-next" type="date" value="${esc(ctx.next)}"><span class="help" style="margin:0">Se actualiza el vencimiento de ${esc(link.label)} al guardar.</span></div>` : ''}
       <div class="field"><label for="gx-desc">Descripción (opcional)</label><input id="gx-desc" maxlength="200" value="${esc(it.descripcion || '')}"></div>
       <div class="field"><label for="gx-local">Local (opcional)</label><input id="gx-local" maxlength="80" value="${esc(it.local || '')}"></div>
       <div id="gx-resets" class="stack">
@@ -1724,7 +1750,7 @@ function openExpenseModal(existing) {
   // al editar uno existente arrancan destildadas para no reiniciar contadores por accidente.
   const syncResets = check => {
     const tipo = $('#gx-tipo', el).value; let any = false;
-    SERVICE_ITEMS.forEach((a, i) => { const m = a.match({ tipo }), lb = $(`[data-reset="${a.id}"]`, el); lb.hidden = !m; any = any || m;
+    SERVICE_ITEMS.forEach((a, i) => { const m = a.match({ tipo }) || (link && link.id === a.id), lb = $(`[data-reset="${a.id}"]`, el); lb.hidden = !m; any = any || m;
       const cb = $('#gx-r-' + i, el); if (!m) cb.checked = false; else if (check) cb.checked = true; });
     $('#gx-r-none', el).hidden = any || !tipo.trim();
   };
@@ -1734,18 +1760,23 @@ function openExpenseModal(existing) {
     const err = m => { const p = $('#gx-error', el); p.textContent = m; p.hidden = !m; return false; };
     const fecha = $('#gx-fecha', el).value, monto = parseNum($('#gx-monto', el).value), odoRaw = $('#gx-odo', el).value.trim();
     const odo = odoRaw ? parseKm(odoRaw) : null, cat = $('#gx-cat', el).value;
-    const resets = cat === 'PREVENTIVO' ? SERVICE_ITEMS.filter((a, i) => $('#gx-r-' + i, el).checked && a.match({ tipo: $('#gx-tipo', el).value })) : [];
+    const resets = cat === 'PREVENTIVO' ? SERVICE_ITEMS.filter((a, i) => $('#gx-r-' + i, el).checked && (a.match({ tipo: $('#gx-tipo', el).value }) || (link && link.id === a.id))) : [];
     if (!isValidDate(fecha)) return err('Ingresá una fecha válida.');
     if (!Number.isFinite(monto) || monto < 0) return err('Ingresá un monto válido.');
     if (odoRaw && !(odo > 0)) return err('El odómetro debe ser un número mayor a 0.');
     if (resets.some(a => a.km) && !odo) return err('Para reiniciar un contador por km ingresá el odómetro del service.');
+    const next = $('#gx-next', el) ? $('#gx-next', el).value : '';
+    if (next && !isValidDate(next)) return err('Ingresá una fecha válida para el próximo vencimiento.');
+    if (next && next <= fecha) return err('El próximo vencimiento tiene que ser posterior a la fecha del pago.');
     const time = existing && datePart(existing.fecha) === fecha ? (String(existing.fecha).slice(11) || '12:00:00') : nowTime();
     await store.save('expenses', {
       ...(existing ? { id: existing.id } : {}), fecha: `${fecha}T${time}`, odometro: odo, categoria: cat,
       tipo: $('#gx-tipo', el).value.trim() || CATS[cat].short, descripcion: $('#gx-desc', el).value.trim(), monto, local: $('#gx-local', el).value.trim(),
-      grupoId: existing?.grupoId || null, origen: existing?.origen || 'manual'
+      grupoId: existing?.grupoId || null, origen: existing?.origen || 'manual',
+      ...((link || existing?.vencimientoId) ? { vencimientoId: link ? link.id : existing.vencimientoId } : {})   // qué alerta originó el gasto
     });
     const patch = {};
+    if (next && link) patch.vencimientos = { [link.key]: next };
     // Los contadores nunca retroceden: editar o cargar un gasto viejo no pisa un service más reciente.
     const cur = state.settings || {};
     for (const a of resets) {
@@ -1958,6 +1989,7 @@ const actions = {
   onboarding: () => openOnboarding(),
   'onboard-one': el => openOnboarding(el.dataset.id),
   'mark-reviewed': el => markReviewed(el.dataset.id),
+  'alert-expense': el => openAlertExpense(el.dataset.id),
   'toggle-grp': el => { const g = el.dataset.grupo, open = el.getAttribute('aria-expanded') !== 'true'; state.ui.grpOpen.set(g, open);
     el.setAttribute('aria-expanded', String(open)); el.nextElementSibling.hidden = !open; },
   export: () => exportBackup(),
@@ -1971,6 +2003,7 @@ function bindEvents() {
   });
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && modal) { closeModal(); return; }
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[role=button][data-action]')) { e.preventDefault(); e.target.click(); return; }
     if (e.key === 'Tab' && modal) {   // foco atrapado dentro del modal
       const f = $$('button,input,select,textarea,summary,[href]', modal.el).filter(x => !x.disabled && x.offsetParent !== null);
       if (!f.length) return;
@@ -2021,7 +2054,7 @@ async function boot() {
   if (DEMO) {
     store = createMemoryStore();
     window.__garage = { state, store, derive, buildDrivvoPlan, buildJsonPlan, computeAlerts, serviceCounters,
-      parseCSV, finishPlan, executePlan, showPlanPreview, migrateSettings, SERVICE_ITEMS, DATE_ALERTS, GROUPS, openOnboarding, markReviewed, kmRef };   // solo para pruebas locales (tests/smoke.mjs)
+      parseCSV, finishPlan, executePlan, showPlanPreview, migrateSettings, SERVICE_ITEMS, DATE_ALERTS, GROUPS, openOnboarding, markReviewed, kmRef, openAlertExpense, lastExpenseFor };   // solo para pruebas locales (tests/smoke.mjs)
     enterApp({ uid: 'demo', email: 'demo@local' });
     return;
   }
