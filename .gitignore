@@ -4,3 +4,9 @@
 # Copias de seguridad de la app
 autolog-backup-*.json
 *backup*.json
+# Fixtures sintéticas de los tests (datos inventados, se versionan)
+!tests/fixtures/drivvo-mini.csv
+!tests/fixtures/wallet-mini.csv
+!tests/fixtures/backup-mini.json
+# Dependencias de desarrollo
+node_modules/

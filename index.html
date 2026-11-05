@@ -1828,7 +1828,8 @@ async function boot() {
 
   if (DEMO) {
     store = createMemoryStore();
-    window.__garage = { state, derive, buildDrivvoPlan, buildJsonPlan, computeAlerts, serviceCounters };   // solo para pruebas locales
+    window.__garage = { state, derive, buildDrivvoPlan, buildJsonPlan, computeAlerts, serviceCounters,
+      parseCSV, finishPlan, executePlan, showPlanPreview };   // solo para pruebas locales (tests/smoke.mjs)
     enterApp({ uid: 'demo', email: 'demo@local' });
     return;
   }

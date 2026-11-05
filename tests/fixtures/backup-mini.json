@@ -1,0 +1,20 @@
+{
+  "app": "garage-radar",
+  "version": 1,
+  "exportedAt": "2026-10-01T12:00:00.000Z",
+  "settings": {
+    "vehiculo": { "nombre": "Auto de prueba", "modelo": "Voyage 1.6", "anio": 2015, "tanque": 50 },
+    "vencimientos": { "vtv": "2026-11-20", "oblea": "2026-10-15", "pruebaHidraulica": "2029-06-01", "seguro": "2027-03-01" },
+    "ultimoAceiteKm": 209100,
+    "ultimoAceiteFecha": "2026-02-15",
+    "ultimoNeumaticosKm": 205000,
+    "ultimoNeumaticosFecha": "2025-12-01"
+  },
+  "refuels": [
+    { "id": "fx_r1", "fecha": "2026-09-01T10:00:00", "odometro": 214000, "combustible": "NAFTA", "grado": "Nafta Super", "volumen": 40, "costoTotal": 52000, "lleno": true, "estacion": "Estación Ficticia", "notas": "", "origen": "manual" },
+    { "id": "fx_r2", "fecha": "2026-09-20T10:00:00", "odometro": 214600, "combustible": "GNC", "grado": null, "volumen": 12, "costoTotal": 7200, "lleno": true, "estacion": "GNC Inventado", "notas": "", "origen": "manual" }
+  ],
+  "expenses": [
+    { "id": "fx_e1", "fecha": "2026-08-10T09:00:00", "odometro": 213500, "categoria": "OTROS", "tipo": "Lavadero", "descripcion": "", "monto": 8000, "local": "", "grupoId": null, "origen": "manual" }
+  ]
+}

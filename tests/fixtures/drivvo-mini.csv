@@ -1,0 +1,18 @@
+##Vehicle
+Nombre,Modelo,Año,Capacidad del Deposito(L)
+Auto de prueba,Voyage 1.6,2015,50
+
+##Refuelling
+Fecha,Odómetro (km),Combustible,Volumen,Costo Total,Depósito lleno al máximo,Estación de servicio,Notas
+2026-01-10 09:30:00,208000,Nafta Super,40.5,48600,Si,Estación Ficticia Norte,
+2026-01-24 18:05:00,208450,GNC,12.3,6150,Si,GNC Inventado,
+2026-02-07 11:20:00,208900,Nafta Super,38.2,47750,Si,Estación Ficticia Norte,"nota con, coma"
+
+##Expense
+Fecha,Odómetro (km),Tipo de Gasto,Título,Notas,Costo Total,Gasto Local
+2026-03-05 10:00:00,209300,Seguro Automotor,,Cuota marzo,45000,Aseguradora Ejemplo
+
+##Service
+Fecha,Odómetro (km),Tipo de Servicio,Título,Notas,Costo Total,Local del Servicio
+2026-02-15 08:45:00,209100,Cambio de aceite,,,62000,Taller Inventado
+2026-02-15 08:45:00,209100,Rotar neumáticos,,,15000,Taller Inventado
