@@ -65,12 +65,12 @@
 **Agente / Modelo:** Software Architect / Opus
 **Descripción:** Escribir `tasks/adr-catalogo.md` con: esquema del catálogo (`id, grupo, km, meses, tipo service/inspección, warnKm, warnDias, prioridad, motivo, fuente, match`), cómo se guardan los contadores por ítem frente a las claves viejas `ultimo*Km/Fecha` de `SERVICE_ITEMS` (:502), la migración de `ultimoNeumaticosKm/Fecha` a rotación/alineación/balanceo, y si conviene modularizar en ES modules sin build.
 **Criterios de aceptación:**
-- [ ] El ADR define el esquema y un ejemplo para cada `tipo`.
-- [ ] Define la migración de forma idempotente (correrla dos veces da lo mismo).
-- [ ] Decide explícitamente modularizar sí/no, con el costo para el service worker y Pages.
-- [ ] Respeta la decisión de Bryan (05/11): GNC queda solo con el ítem existente "Equipo de GNC" más la oblea y la prueba hidráulica de `DATE_ALERTS`. No se agregan regulador, filtro de gas ni válvulas.
+- [x] El ADR define el esquema y un ejemplo para cada `tipo`.
+- [x] Define la migración de forma idempotente (correrla dos veces da lo mismo).
+- [x] Decide explícitamente modularizar sí/no, con el costo para el service worker y Pages.
+- [x] Respeta la decisión de Bryan (05/11): GNC queda solo con el ítem existente "Equipo de GNC" más la oblea y la prueba hidráulica de `DATE_ALERTS`. No se agregan regulador, filtro de gas ni válvulas.
 **Verificación:**
-- [ ] `node tests/smoke.mjs` (no cambia; el ADR no toca código)
+- [x] `node tests/smoke.mjs` (no cambia; el ADR no toca código)
 - [ ] Revisión manual: Bryan lee el resumen de decisiones (máx. una página).
 **Dependencias:** T0.1
 **Archivos probables:** `tasks/adr-catalogo.md`
