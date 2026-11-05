@@ -693,6 +693,45 @@ async function main() {
       await ctx.close();
     });
 
+    await test('S2 revisión: pago viejo de 15ff551 no cubre un período, variación contra el mismo período, respaldo con recurrentes y "no aplica"', async () => {
+      const { ctx, page, errors } = await openDemo(browser, base);
+      // M1: octubre pagado tarde (03/11) con 15ff551 → vencimientos.seguro = 10/11. Noviembre sigue pendiente.
+      await page.evaluate(() => window.__garage.store.writeMany('expenses', [
+        { id: 'old', fecha: '2026-11-03T10:00:00', odometro: null, categoria: 'TRAMITES', tipo: 'Seguro', descripcion: '', monto: 58000, local: '', grupoId: null, origen: 'manual', vencimientoId: 'seguro' }]));
+      await saveSettings(page, { vencimientos: { seguro: '2026-11-10' } });
+      await settle(page);
+      const m1 = await page.evaluate(() => { const g = window.__garage, a = g.computeAlerts(g.derive()).find(x => x.id === 'seguro'); return [a.st, a.periodo, a.monto]; });
+      eq(m1, ['yellow', '2026-11', 58000], 'el pago viejo precarga el monto pero no cubre noviembre');
+      // M2: una segunda cuota del mismo período se compara con la de ese período.
+      await page.evaluate(() => window.__garage.store.writeMany('expenses', [
+        { id: 'p11', fecha: '2026-11-04T10:00:00', odometro: null, categoria: 'TRAMITES', tipo: 'Seguro', descripcion: '', monto: 60000, local: '', grupoId: null, origen: 'manual', recurrenteId: 'seguro', periodo: '2026-11', cubre: 1, clase: 'cuota' }]));
+      await settle(page);
+      await page.evaluate(() => window.__garage.openAlertExpense('seguro'));
+      await page.locator('#gx-periodo').fill('2026-11');
+      await page.locator('#gx-monto').fill('66000');
+      assert((await page.locator('#gx-var').textContent()).startsWith('+10,0 %'), `variación mismo período: "${await page.locator('#gx-var').textContent()}"`);
+      await page.locator('[data-modal-close]').first().click();
+      // B4: "no aplica" saca la tarjeta de la patente y su alerta.
+      await goTab(page, 'vencimientos');
+      eq(await page.locator('#radar-list [data-action=rec-edit][data-tipo=patente]').count(), 1, 'tarjeta de patente visible');
+      await saveSettings(page, { noAplica: { patente: true } });
+      await settle(page);
+      eq(await page.locator('#radar-list [data-action=rec-edit][data-tipo=patente]').count(), 0, '"no aplica" oculta la tarjeta de la patente');
+      eq(errors, [], 'errores de consola');
+      await ctx.close();
+      // M3: restaurar un respaldo con recurrentes y la fecha vieja del seguro no pisa la patente.
+      const b = await openDemo(browser, base);
+      const recs = await b.page.evaluate(async () => {
+        const g = window.__garage, p = g.buildJsonPlan(JSON.stringify({ app: 'garage-radar', version: 1, refuels: [], expenses: [],
+          settings: { vencimientos: { seguro: '2026-11-10' }, recurrentes: { patente: { id: 'patente', tipo: 'patente', nombre: 'Patente', modo: 'manual', proximo: '2027-01-15', activo: true } } } }));
+        await g.executePlan(p); await new Promise(r => setTimeout(r, 50));
+        const s = g.state.settings; return [Object.keys(s.recurrentes).sort(), s.recurrentes.patente.proximo, s.migraciones.seguroRecurrente];
+      });
+      eq(recs, [['patente', 'seguro'], '2027-01-15', true], 'respaldo restaurado con los dos recurrentes');
+      eq(b.errors, [], 'errores de consola');
+      await b.ctx.close();
+    });
+
     await test('Cada alerta abre su gasto: services con su casilla tildada y vencimientos con el próximo', async () => {
       const { ctx, page, errors } = await openDemo(browser, base);
       const bad = await page.evaluate(() => {

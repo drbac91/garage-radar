@@ -249,8 +249,8 @@
 **Tamaño:** M
 
 ## Checkpoint S2
-- [x] `node tests/smoke.mjs` en verde (26/26)
-- [ ] code-reviewer (Opus) sin hallazgos altos
+- [x] `node tests/smoke.mjs` en verde (27/27)
+- [x] code-reviewer (Opus) sin hallazgos altos (05/11: tres medios y un bajo corregidos, con su caso en el smoke)
 - [ ] Respaldo JSON exportado por Bryan antes de la migración del seguro (T2.2)
 - [ ] Bryan revisa en iPhone: alta del seguro, registrar un pago en ≤3 toques, historial
 - [ ] Push a GitHub Pages + forzar recarga por caché del service worker

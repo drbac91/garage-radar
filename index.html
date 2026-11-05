@@ -613,6 +613,7 @@ const REC_TIPOS = {
 const REC_MODOS = { mensual: 'Mensual, día fijo', manual: 'Próximo vencimiento en cada pago' };
 const REC_WARN = { mensual: 7, manual: 15 };   // días de aviso (amarillo) antes del vencimiento
 const REC_CLASES = ['cuota', 'ajuste'];
+const REC_NA = Object.entries(REC_TIPOS).map(([id, t]) => ({ id, label: `${t.nombre} (pago recurrente)` }));   // para la lista "no aplica" de Configurar
 const intIn = (v, lo, hi, def) => Number.isInteger(v) && v >= lo && v <= hi ? v : def;
 const isYM = s => /^\d{4}-(0[1-9]|1[0-2])$/.test(String(s ?? ''));
 const ymAdd = (ym, n) => { const [y, m] = ym.split('-').map(Number); return new Date(Date.UTC(y, m - 1 + n, 1)).toISOString().slice(0, 7); };
@@ -634,7 +635,8 @@ const recIdOf = e => (e.recurrenteId && REC_TIPOS[e.recurrenteId] ? e.recurrente
 // Pagos vinculados al recurrente, ordenados por período y fecha. Sin periodo guardado, cuenta el mes de la fecha.
 function recPayments(r, expenses = state.expenses) {
   return expenses.filter(e => recIdOf(e) === r.id)
-    .map(e => ({ e, periodo: isYM(e.periodo) ? e.periodo : datePart(e.fecha).slice(0, 7), cubre: intIn(e.cubre, 1, 12, 1), clase: e.clase === 'ajuste' ? 'ajuste' : 'cuota', monto: Number(e.monto) || 0 }))
+    .map(e => ({ e, periodo: isYM(e.periodo) ? e.periodo : datePart(e.fecha).slice(0, 7), cubre: intIn(e.cubre, 1, 12, 1), clase: e.clase === 'ajuste' ? 'ajuste' : 'cuota', monto: Number(e.monto) || 0,
+      legacy: !e.recurrenteId }))   // pago de 15ff551: su período real ya quedó reflejado en `desde` por la migración
     .sort((a, b) => a.periodo.localeCompare(b.periodo) || String(a.e.fecha).localeCompare(String(b.e.fecha)));
 }
 const coveredBy = p => Array.from({ length: p.cubre }, (_, i) => ymAdd(p.periodo, i));
@@ -658,7 +660,7 @@ function recStatus(r, pays, today = todayISO()) {
     iso = datePart(r.proximo); periodo = iso.slice(0, 7);
   } else {
     const dia = intIn(r.diaVencimiento, 1, 31, null); if (!dia) return null;
-    const cov = new Set(pays.filter(p => p.clase === 'cuota').flatMap(coveredBy));
+    const cov = new Set(pays.filter(p => p.clase === 'cuota' && !p.legacy).flatMap(coveredBy));   // los pagos viejos no cubren: el mes de pago no es el período
     periodo = isYM(r.desde) ? r.desde : cur;
     for (let i = 0; i < 1200 && cov.has(periodo); i++) periodo = ymAdd(periodo, 1);
     iso = dueDate(periodo, dia);
@@ -1045,7 +1047,7 @@ function computeAlerts(D) {
   }
   // Pagos recurrentes activos (seguro, patente): pendiente, vencido o al día según el ADR §4. Se desactivan con `activo`.
   for (const r of recurrentesList(s)) {
-    if (r.activo === false) continue;
+    if (r.activo === false || off[r.id]) continue;
     const stx = recStatus(r, recPayments(r)); if (!stx) continue;
     const t = REC_TIPOS[r.tipo], cs = recCuotas(r), lc = cs[cs.length - 1];
     out.push({ id: r.id, key: r.id, label: r.nombre || t.nombre, sub: t.sub, icon: t.icon, grupo: 'Legal', tipo: 'recurrente', kind: 'rec', rec: r, ...stx,
@@ -1273,14 +1275,14 @@ async function executePlan(plan) {
   if (!DEMO && !navigator.onLine) throw new Error('Sin conexión: conectate para importar datos.');
   await store.writeMany('refuels', plan.newRefuels);
   await store.writeMany('expenses', plan.newExpenses);
-  const patch = {};
+  let patch = {};
   if (plan.settings) {
     const cur = state.settings || {};
     if (plan.source.startsWith('Drivvo')) {   // solo completa el vehículo si estaba vacío
       if (!cur.vehiculo || !cur.vehiculo.nombre) patch.vehiculo = plan.settings.vehiculo;
     } else Object.assign(patch, plan.settings);
   }
-  Object.assign(patch, migrateSettings({ ...state.settings, ...patch }));   // antes de serviceCounters: si no, un gasto viejo bloquearía la migración
+  patch = deepMerge(patch, migrateSettings({ ...state.settings, ...patch }));   // merge profundo: no pisa `recurrentes` ni `migraciones` del respaldo   // antes de serviceCounters: si no, un gasto viejo bloquearía la migración
   Object.assign(patch, serviceCounters([...state.expenses, ...plan.newExpenses], { ...state.settings, ...patch }));
   if (Object.keys(patch).length) await store.saveSettings(patch);
   return { inserted: plan.newRefuels.length + plan.newExpenses.length, dupes: plan.dupes, rejected: plan.rejected.length };
@@ -1372,7 +1374,7 @@ const onboardCTA = A => { const n = unconfigured(A).length;
 
 // Tarjeta para dar de alta los recurrentes que faltan (ADR §7: si no había fecha del seguro, no se crea nada solo).
 // En Resumen solo se ofrece el seguro (obligatorio); la patente se agrega desde Vencimientos o Ajustes.
-const recCTA = (only = null) => { const miss = Object.keys(REC_TIPOS).filter(t => (!only || only.includes(t)) && !((state.settings || {}).recurrentes || {})[t]);
+const recCTA = (only = null) => { const s = state.settings || {}, miss = Object.keys(REC_TIPOS).filter(t => (!only || only.includes(t)) && !(s.recurrentes || {})[t] && !(s.noAplica || {})[t]);
   return miss.map(t => `<button class="btn btn-ghost btn-block" type="button" data-action="rec-edit" data-tipo="${t}">${icon(REC_TIPOS[t].icon, 16)}Agregar ${esc(REC_TIPOS[t].nombre.toLowerCase())} como pago recurrente</button>`).join(''); };
 
 function renderRadar(D) {
@@ -1923,7 +1925,7 @@ function openExpenseModal(existing, ctx = null) {
   const submitBtn = $('button[type=submit]', el), submitTxt = submitBtn.textContent;
   const recCalc = () => {
     const p = $('#gx-periodo', el).value, cubre = Number($('#gx-cubre', el).value) || 1, clase = $('#gx-clase', el).value, m = parseNum($('#gx-monto', el).value);
-    const prev = clase === 'cuota' && isYM(p) ? recCuotas(rec, existing ? existing.id : null).filter(x => x.periodo < p).pop() || null : null;
+    const prev = clase === 'cuota' && isYM(p) ? recCuotas(rec, existing ? existing.id : null).filter(x => x.periodo <= p).pop() || null : null;
     const pct = prev && m > 0 ? pctChange(m / cubre, prev.monto / prev.cubre) : null;
     const mine = isYM(p) ? coveredBy({ periodo: p, cubre }) : [];
     const dup = clase === 'cuota' ? recPayments(rec).filter(x => x.clase === 'cuota' && (!existing || x.e.id !== existing.id) && coveredBy(x).some(ym => mine.includes(ym))) : [];
@@ -2006,9 +2008,9 @@ function openSettingsModal() {
         ${a.km ? `<input id="st-${a.key}" class="num" inputmode="numeric" placeholder="Odómetro (km)" aria-label="${esc(a.label)}: odómetro" value="${Number.isFinite(s[a.key]) ? s[a.key] : ''}">` : '<span></span>'}
         <input id="st-${a.fkey}" type="date" aria-label="${esc(a.label)}: fecha" value="${esc(datePart(s[a.fkey]))}">
       </div></div>`).join('') : ''; }).join('')}
-      <details class="more-info"><summary>Ítems que no aplican a tu auto (${nf([...DATE_ALERTS, ...SERVICE_ITEMS].filter(a => off[a.id]).length)})</summary>
+      <details class="more-info"><summary>Ítems que no aplican a tu auto (${nf([...DATE_ALERTS, ...REC_NA, ...SERVICE_ITEMS].filter(a => off[a.id]).length)})</summary>
         <p class="help">Los ítems tildados no aparecen en Vencimientos, Resumen ni en la carga inicial.</p>
-        <div class="stack">${[...DATE_ALERTS, ...SERVICE_ITEMS].map(a => `<label class="check"><input type="checkbox" data-noaplica="${esc(a.id)}" ${off[a.id] ? 'checked' : ''}> ${esc(a.label)}</label>`).join('')}</div>
+        <div class="stack">${[...DATE_ALERTS, ...REC_NA, ...SERVICE_ITEMS].map(a => `<label class="check"><input type="checkbox" data-noaplica="${esc(a.id)}" ${off[a.id] ? 'checked' : ''}> ${esc(a.label)}</label>`).join('')}</div>
       </details>
       <button class="btn btn-ghost btn-block" type="button" id="st-derive"><span data-icon="clipboard" data-size="16"></span>Calcular desde el historial de gastos</button>
       <p class="help">Los contadores se reinician automáticamente al registrar un gasto preventivo con la casilla correspondiente.</p>

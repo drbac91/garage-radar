@@ -58,7 +58,7 @@ Cada pago es un **gasto** (`expenses`) de categoría `TRAMITES` con estos campos
 
 **Variación % (criterio "sin recalcular a mano"):** se calcula una vez, al guardar, y queda en `variacionPct`. La fórmula compara **montos por cuota**: `monto / cubre` contra la cuota `clase: 'cuota'` anterior (por `periodo`, y a igual período, por fecha). El historial recalcula la serie para el gráfico, pero la lista muestra el valor guardado.
 
-**Pagos anteriores al S2:** el commit 15ff551 ya guardaba `vencimientoId: 'seguro'` en los gastos que se registraban desde la alerta. Esos gastos cuentan como pagos del recurrente `seguro`, con `periodo` igual al mes de su fecha y `cubre` = 1. No se reescriben los documentos. Lo mismo vale al restaurar un respaldo JSON viejo: `vencimientoId: 'seguro'` se conserva y se interpreta así.
+**Pagos anteriores al S2:** el commit 15ff551 ya guardaba `vencimientoId: 'seguro'` en los gastos que se registraban desde la alerta. Esos gastos cuentan como pagos del recurrente `seguro` para el monto precargado y el historial, con `periodo` igual al mes de su fecha y `cubre` = 1. **No cubren períodos:** el mes del pago no siempre es el período pagado (por ejemplo, la cuota de octubre pagada el 03/11), y la migración ya refleja lo pagado en `desde`. Al editar uno de esos gastos, se guarda con `recurrenteId` y su período real, y desde ahí cuenta. No se reescriben los documentos. Lo mismo vale al restaurar un respaldo JSON viejo: `vencimientoId: 'seguro'` se conserva y se interpreta así.
 
 **Monto precargado:** es el del último pago del recurrente (`clase: 'cuota'`). Si todavía no hay ninguno, se usa el último gasto cuyo tipo coincide (`/seguro/` o `/patente|impuesto automotor/`), por ejemplo "Seguro Automotor" importado de Drivvo. Si tampoco hay, se usa `montoEstimado`.
 
@@ -107,7 +107,9 @@ Al registrar un pago, el formulario propone **P** como período, no el mes de la
 
 ## 6. Aviso de período duplicado
 
-Antes de guardar un pago `clase: 'cuota'`, si otro pago `clase: 'cuota'` del mismo recurrente ya cubre alguno de los períodos que cubriría el nuevo, se muestra un `confirmDialog` con el período y el monto existente. Si se cancela, no se guarda. Al editar un pago, el propio gasto no cuenta como duplicado.
+Antes de guardar un pago `clase: 'cuota'`, se revisa si otro pago `clase: 'cuota'` del mismo recurrente ya cubre alguno de los períodos que cubriría el nuevo. En ese caso, el formulario muestra un aviso con el período y el monto existente, y el botón pasa a decir «Guardar igual». El primer toque no guarda nada; recién el segundo confirma. Si se cambia el período, la cantidad de cuotas o la clase, la confirmación se reinicia. Al editar un pago, el propio gasto no cuenta como duplicado.
+
+Se eligió esto en lugar de `confirmDialog` porque `openModal` reemplaza el modal abierto, y un `confirmDialog` cerraría el formulario y perdería lo cargado.
 
 ## 7. Migración de la fecha `seguro`
 
@@ -147,6 +149,10 @@ No hace falta cambiar nada para que S2 funcione. `users/{uid}/{document=**}` ya 
 
 ## 9. Consecuencias
 
-- Una sola fuente de verdad para "pagado": los gastos vinculados. Borrar el gasto deja el período otra vez pendiente.
+- Una sola fuente de verdad para "pagado": los gastos vinculados.
+  - **Modo mensual:** borrar el gasto deja el período otra vez pendiente.
+  - **Modo manual (patente):** borrar el pago **no** revierte `proximo`. Se corrige a mano en Ajustes → Editar.
+- **"No aplica":** `noAplica.seguro` y `noAplica.patente` se marcan desde Configurar. Ocultan la alerta y la tarjeta "Agregar…".
+- **Variación de una segunda cuota del mismo período:** se compara contra la cuota ya registrada de ese período, igual que en el historial.
 - El ajuste acumulado (T2.5) compara la primera cuota con la última. Si hay `inicioPoliza`, también compara la primera cuota desde esa fecha con la última.
 - S3 (importar Wallet y vincular Drivvo) solo tiene que asignar `recurrenteId`, `periodo`, `cubre` y `clase` a los gastos. El estado y el historial salen solos.
