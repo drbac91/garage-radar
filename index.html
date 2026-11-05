@@ -250,6 +250,7 @@ button.alert{cursor:pointer}
 .sheet-title{margin:0;font-size:19px;font-weight:900;letter-spacing:-.015em;line-height:1.15}
 .sheet-body{display:grid;gap:12px}
 .sheet-foot{display:flex;gap:10px;justify-content:flex-end;margin-top:6px;flex-wrap:wrap}
+.sheet-foot.sticky{position:sticky;bottom:calc(-18px - env(safe-area-inset-bottom));background:var(--card);padding:10px 0 calc(10px + env(safe-area-inset-bottom));margin-bottom:calc(-18px - env(safe-area-inset-bottom));z-index:1}   /* pago recurrente: "Guardar" siempre a mano (≤ 3 toques) */
 .check{display:flex;gap:10px;align-items:center;font-size:14px}
 .check input{width:20px;height:20px;accent-color:var(--green)}
 .alert[data-action]{cursor:pointer;transition:transform .35s var(--spring),background-color .2s}
@@ -259,6 +260,13 @@ button.alert{cursor:pointer}
 .gx-last b{color:var(--text)}
 .alert-actions{grid-column:1/-1;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;margin-top:-2px}
 .alert-actions .btn{min-height:40px}
+.gx-var{margin:-4px 0 0;font-size:13px;color:var(--muted)}
+.gx-var b{color:var(--text)}
+.form-warn{margin:0;font-size:13px;color:var(--yellow);background:rgba(247,190,0,.1);border-radius:.65rem;padding:9px 11px}
+.rec-row{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;justify-content:space-between;padding:12px;border-radius:.9rem;background:var(--field)}
+.rec-acts{display:flex;gap:8px}
+.rec-acts .btn{min-height:40px}
+.rh-var{font-size:12px;color:var(--muted);text-align:right}
 .rgroup .group-head{padding:12px}
 .rgroup .grp-count{font-size:12px;font-weight:800;color:var(--muted);white-space:nowrap}
 .rgroup .grp-count b[data-s=red]{color:var(--red)}.rgroup .grp-count b[data-s=yellow]{color:var(--yellow)}
@@ -453,6 +461,8 @@ details.more-info summary{cursor:pointer;color:var(--blue);font-weight:700;font-
     <div class="view" data-view="ajustes" hidden>
       <section class="card rounded-2xl" aria-labelledby="t-ajustes">
         <div class="card-head"><h2 class="card-title" id="t-ajustes"><span data-icon="gear"></span>Ajustes</h2></div>
+        <div class="tile-label" style="margin:0 0 8px">Pagos recurrentes</div>
+        <div id="rec-list" class="stack" style="margin-bottom:16px"></div>
         <div class="stack">
           <button class="btn btn-ghost btn-block" type="button" data-action="open-settings"><span data-icon="gear" data-size="16"></span>Configurar vehículo y vencimientos</button>
           <button class="btn btn-ghost btn-block" type="button" data-action="import"><span data-icon="upload" data-size="16"></span>Importar Datos</button>
@@ -507,8 +517,8 @@ const EFF_RANGE = [3, 30];   // rango plausible de rendimiento (km por unidad)
 const DATE_ALERTS = [
   { key: 'vtv', label: 'VTV', sub: 'Verificación Técnica Vehicular', icon: 'clipboard', grupo: 'Legal', renueva: 12, re: /vtv|verificacion tecnica/ },
   { key: 'oblea', label: 'Oblea de GNC', sub: 'Vencimiento anual', icon: 'flame', grupo: 'GNC', renueva: 12, re: /oblea/ },
-  { key: 'pruebaHidraulica', label: 'Prueba hidráulica del cilindro', sub: 'Cada 5 años', icon: 'cylinder', grupo: 'GNC', renueva: 60, re: /prueba hidraulica/ },
-  { key: 'seguro', label: 'Seguro', sub: 'Vencimiento de la póliza', icon: 'shield', grupo: 'Legal', renueva: 1, re: /seguro/ }
+  { key: 'pruebaHidraulica', label: 'Prueba hidráulica del cilindro', sub: 'Cada 5 años', icon: 'cylinder', grupo: 'GNC', renueva: 60, re: /prueba hidraulica/ }
+// El seguro dejó de ser una fecha: es un pago recurrente (REC_TIPOS, ADR tasks/adr-recurrentes.md).
 // `renueva`: meses que se suma al vencimiento al registrar el pago (se puede editar). `re` reconoce los gastos que lo pagan.
 ].map(({ re, ...a }) => ({ ...a, id: a.key, tipo: 'fecha', match: e => re.test(norm(e.tipo)) }));
 // Catálogo de mantenimiento (ADR: tasks/adr-catalogo.md). Cada fila es un dato: vence por km, por tiempo o lo que
@@ -576,8 +586,12 @@ const SERVICE_ITEMS = [
 });
 // Migración: "Rotación y alineación" (ultimoNeumaticosKm/Fecha) se dividió en rotación, alineación y balanceo.
 // Pura e idempotente: copia solo a destinos vacíos, una sola vez (marca en `migraciones`) y no borra la clave vieja.
+// Cada migración tiene su propia marca en `migraciones`: en producción `neumaticos3` ya está marcada y eso no puede frenar a las demás.
 function migrateSettings(s) {
   s = s || {};
+  return deepMerge(migrateNeumaticos(s), migrateSeguro(s));
+}
+function migrateNeumaticos(s) {
   if (s.migraciones && s.migraciones.neumaticos3) return {};
   // Sin datos viejos no hay nada que migrar ni se marca: un respaldo viejo importado después todavía se migra.
   if (!Number.isFinite(s.ultimoNeumaticosKm) && !isValidDate(s.ultimoNeumaticosFecha)) return {};
@@ -588,6 +602,90 @@ function migrateSettings(s) {
     if (isValidDate(s.ultimoNeumaticosFecha) && empty(s[`ultimo${stem}Fecha`])) patch[`ultimo${stem}Fecha`] = datePart(s.ultimoNeumaticosFecha);
   }
   return patch;
+}
+/* ---- Pagos recurrentes: seguro y patente (ADR: tasks/adr-recurrentes.md) ----
+   Se guardan en settings.recurrentes (id = tipo). Cada pago es un gasto TRAMITES con recurrenteId, periodo (YYYY-MM),
+   cubre (cuántos períodos paga), clase (cuota | ajuste) y variacionPct (guardada al registrar el pago). */
+const REC_TIPOS = {
+  seguro: { nombre: 'Seguro', sub: 'Cuota mensual', icon: 'shield', modo: 'mensual', re: /seguro/ },
+  patente: { nombre: 'Patente', sub: 'Impuesto automotor', icon: 'doc', modo: 'manual', re: /patente|impuesto (al )?automotor/ }
+};
+const REC_MODOS = { mensual: 'Mensual, día fijo', manual: 'Próximo vencimiento en cada pago' };
+const REC_WARN = { mensual: 7, manual: 15 };   // días de aviso (amarillo) antes del vencimiento
+const REC_CLASES = ['cuota', 'ajuste'];
+const intIn = (v, lo, hi, def) => Number.isInteger(v) && v >= lo && v <= hi ? v : def;
+const isYM = s => /^\d{4}-(0[1-9]|1[0-2])$/.test(String(s ?? ''));
+const ymAdd = (ym, n) => { const [y, m] = ym.split('-').map(Number); return new Date(Date.UTC(y, m - 1 + n, 1)).toISOString().slice(0, 7); };
+const ymLabel = ym => { const [y, m] = String(ym).split('-').map(Number); return MONTHS[m - 1] ? `${MONTHS[m - 1]} ${y}` : '—'; };
+// Día de vencimiento de un período; en meses cortos, el último día (31 → 28/02).
+const dueDate = (ym, dia) => { const [y, m] = ym.split('-').map(Number); return `${ym}-${pad(Math.min(dia, new Date(Date.UTC(y, m, 0)).getUTCDate()))}`; };
+const dayDiff = (from, to) => Math.round((Date.parse(datePart(to)) - Date.parse(datePart(from))) / 86400000);
+const pctChange = (now, before) => before > 0 && Number.isFinite(now) ? Math.round((now / before - 1) * 1000) / 10 : null;
+const fmtPct = p => `${p > 0 ? '+' : ''}${nf(p, 1)} %`;
+const recDefaults = tipo => ({ id: tipo, nombre: REC_TIPOS[tipo].nombre, tipo, modo: REC_TIPOS[tipo].modo, diaVencimiento: null, desde: null, proximo: null,
+  mesesSugeridos: 2, montoEstimado: null, aseguradora: '', poliza: '', inicioPoliza: null, activo: true });
+function recurrentesList(s = state.settings || {}) {
+  const m = s.recurrentes && typeof s.recurrentes === 'object' ? s.recurrentes : {};
+  return Object.keys(REC_TIPOS).filter(t => m[t] && typeof m[t] === 'object').map(t => ({ ...recDefaults(t), ...m[t], id: t, tipo: t }));
+}
+const recById = id => recurrentesList().find(r => r.id === id) || null;
+// Recurrente de un gasto: el vínculo nuevo (recurrenteId) o el de 15ff551 (vencimientoId: 'seguro').
+const recIdOf = e => (e.recurrenteId && REC_TIPOS[e.recurrenteId] ? e.recurrenteId : null) || (e.vencimientoId === 'seguro' ? 'seguro' : null);
+// Pagos vinculados al recurrente, ordenados por período y fecha. Sin periodo guardado, cuenta el mes de la fecha.
+function recPayments(r, expenses = state.expenses) {
+  return expenses.filter(e => recIdOf(e) === r.id)
+    .map(e => ({ e, periodo: isYM(e.periodo) ? e.periodo : datePart(e.fecha).slice(0, 7), cubre: intIn(e.cubre, 1, 12, 1), clase: e.clase === 'ajuste' ? 'ajuste' : 'cuota', monto: Number(e.monto) || 0 }))
+    .sort((a, b) => a.periodo.localeCompare(b.periodo) || String(a.e.fecha).localeCompare(String(b.e.fecha)));
+}
+const coveredBy = p => Array.from({ length: p.cubre }, (_, i) => ymAdd(p.periodo, i));
+// Cuotas para precargar el monto y medir la variación. Sin pagos vinculados todavía, usa los gastos cuyo tipo
+// coincide (por ejemplo "Seguro Automotor" importado de Drivvo) para no arrancar sin monto anterior.
+function recCuotas(r, excludeId = null) {
+  const own = recPayments(r).filter(p => p.clase === 'cuota' && p.e.id !== excludeId);
+  if (own.length) return own;
+  const re = REC_TIPOS[r.tipo].re;
+  return state.expenses.filter(e => !recIdOf(e) && e.id !== excludeId && isValidDate(e.fecha) && re.test(norm(e.tipo)))
+    .map(e => ({ e, periodo: datePart(e.fecha).slice(0, 7), cubre: 1, clase: 'cuota', monto: Number(e.monto) || 0 }))
+    .sort((a, b) => a.periodo.localeCompare(b.periodo) || String(a.e.fecha).localeCompare(String(b.e.fecha)));
+}
+// Estado del recurrente (ADR §4). Mensual: el próximo período a pagar es el primero sin cubrir desde `desde`.
+// Manual: vence en `proximo`. Devuelve null si falta el dato que define el vencimiento.
+function recStatus(r, pays, today = todayISO()) {
+  const cur = today.slice(0, 7), manual = r.modo === 'manual';
+  let periodo, iso;
+  if (manual) {
+    if (!isValidDate(r.proximo)) return null;
+    iso = datePart(r.proximo); periodo = iso.slice(0, 7);
+  } else {
+    const dia = intIn(r.diaVencimiento, 1, 31, null); if (!dia) return null;
+    const cov = new Set(pays.filter(p => p.clase === 'cuota').flatMap(coveredBy));
+    periodo = isYM(r.desde) ? r.desde : cur;
+    for (let i = 0; i < 1200 && cov.has(periodo); i++) periodo = ymAdd(periodo, 1);
+    iso = dueDate(periodo, dia);
+  }
+  const days = dayDiff(today, iso);
+  const st = days < 0 ? 'red' : days <= REC_WARN[manual ? 'manual' : 'mensual'] || (!manual && periodo <= cur) ? 'yellow' : 'green';
+  return { periodo, iso, days, st };
+}
+// Historial (T2.5): serie por período (monto por cuota), ajuste acumulado total y desde el inicio de la póliza.
+function recHistory(r) {
+  const pays = recPayments(r), serie = new Map();
+  pays.filter(p => p.clase === 'cuota').forEach(p => coveredBy(p).forEach(ym => serie.set(ym, (serie.get(ym) || 0) + p.monto / p.cubre)));
+  const pts = [...serie].sort((a, b) => a[0].localeCompare(b[0])).map(([periodo, monto]) => ({ periodo, monto }));
+  const first = pts[0] || null, last = pts[pts.length - 1] || null;
+  const ini = isYM(r.inicioPoliza) ? pts.find(p => p.periodo >= r.inicioPoliza) || null : null;
+  return { pays, pts, first, last, total: pays.reduce((a, p) => a + p.monto, 0),
+    acum: pts.length > 1 ? pctChange(last.monto, first.monto) : null,
+    acumPoliza: ini && ini !== last ? { desde: ini.periodo, pct: pctChange(last.monto, ini.monto) } : null };
+}
+// Migración (ADR §7): la fecha `vencimientos.seguro` pasa a un recurrente mensual. Pura e idempotente; no borra la fecha vieja.
+function migrateSeguro(s) {
+  if (s.migraciones && s.migraciones.seguroRecurrente) return {};
+  if (s.recurrentes && s.recurrentes.seguro) return { migraciones: { seguroRecurrente: true } };
+  const v = (s.vencimientos || {}).seguro;
+  if (!isValidDate(v)) return {};   // sin fecha no se marca: un respaldo viejo importado después todavía migra
+  const iso = datePart(v);
+  return { migraciones: { seguroRecurrente: true }, recurrentes: { seguro: { ...recDefaults('seguro'), diaVencimiento: Number(iso.slice(8, 10)), desde: iso.slice(0, 7), activo: !(s.noAplica || {}).seguro } } };
 }
 const MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 
@@ -945,6 +1043,14 @@ function computeAlerts(D) {
     const st = days <= 0 ? 'red' : days <= 30 ? 'yellow' : 'green';
     out.push({ ...a, kind: 'date', st, days, iso });
   }
+  // Pagos recurrentes activos (seguro, patente): pendiente, vencido o al día según el ADR §4. Se desactivan con `activo`.
+  for (const r of recurrentesList(s)) {
+    if (r.activo === false) continue;
+    const stx = recStatus(r, recPayments(r)); if (!stx) continue;
+    const t = REC_TIPOS[r.tipo], cs = recCuotas(r), lc = cs[cs.length - 1];
+    out.push({ id: r.id, key: r.id, label: r.nombre || t.nombre, sub: t.sub, icon: t.icon, grupo: 'Legal', tipo: 'recurrente', kind: 'rec', rec: r, ...stx,
+      monto: lc ? lc.monto / lc.cubre : (Number(r.montoEstimado) > 0 ? r.montoEstimado : null) });
+  }
   for (const a of SERVICE_ITEMS) {
     if (off[a.id]) continue;
     // Estado por km y por tiempo (lo que ocurra primero); se muestra el peor de los dos.
@@ -1121,10 +1227,18 @@ function buildJsonPlan(text) {
     const odo = r.odometro === null || r.odometro === undefined || r.odometro === '' ? null : Number(r.odometro);
     const d = { id: typeof r.id === 'string' && r.id ? r.id : 'js_' + hash53(JSON.stringify(r)), fecha: String(r.fecha || ''), odometro: odo, categoria: r.categoria,
       tipo: String(r.tipo || ''), descripcion: String(r.descripcion || ''), monto: Number(r.monto), local: String(r.local || ''), grupoId: r.grupoId || null, origen: r.origen || 'manual',
-      ...(typeof r.vencimientoId === 'string' && alertById(r.vencimientoId) ? { vencimientoId: r.vencimientoId } : {}) };
+      ...(typeof r.vencimientoId === 'string' && (alertById(r.vencimientoId) || r.vencimientoId === 'seguro') ? { vencimientoId: r.vencimientoId } : {}),
+      ...recFieldsOf(r) };
     const err = checkExpense(d); err ? plan.rejected.push({ section: 'Expense', fila: i + 1, motivo: err }) : plan.expenses.push(d);
   });
   return finishPlan(plan);
+}
+
+// Campos de pago recurrente de un gasto (ADR §3), validados: lo que no cumple el formato se descarta.
+function recFieldsOf(r) {
+  if (typeof r.recurrenteId !== 'string' || !REC_TIPOS[r.recurrenteId]) return {};
+  return { recurrenteId: r.recurrenteId, ...(isYM(r.periodo) ? { periodo: r.periodo } : {}), cubre: intIn(r.cubre, 1, 12, 1),
+    clase: REC_CLASES.includes(r.clase) ? r.clase : 'cuota', ...(Number.isFinite(r.variacionPct) ? { variacionPct: r.variacionPct } : {}) };
 }
 
 // Completa el plan con duplicados (IDs ya existentes), rangos de fechas y desglose por tipo.
@@ -1204,7 +1318,7 @@ const unitPrice = r => r.precioUnitario > 0 ? r.precioUnitario : (r.volumen > 0 
 function renderAll() {
   if (!state.user) return;
   const D = derive();
-  renderHeader(D); renderResumen(D); renderRadar(D); renderPassport(D); renderFuel(D); renderExpenses(); renderCharts(D);
+  renderHeader(D); renderResumen(D); renderRadar(D); renderPassport(D); renderFuel(D); renderExpenses(); renderCharts(D); renderRecurrentes();
 }
 
 function renderHeader(D) {
@@ -1222,9 +1336,12 @@ function alertRowHTML(a) {
   const unitStr = { red: 'VENCIDA', yellow: 'PRÓXIMA', green: 'AL DÍA', none: 'SIN CONFIGURAR' };
   let sub = esc(a.sub), big = '—', badge = unitStr.none;
   if (a.st !== 'none' && !a.pending) {
-    badge = a.kind === 'date' ? unitStr[a.st] : { red: 'ATRASADO', yellow: 'PRÓXIMO', green: 'AL DÍA' }[a.st];
+    badge = a.kind === 'date' ? unitStr[a.st] : a.kind === 'rec' ? { red: 'VENCIDO', yellow: 'PENDIENTE', green: 'AL DÍA' }[a.st] : { red: 'ATRASADO', yellow: 'PRÓXIMO', green: 'AL DÍA' }[a.st];
     const whenTxt = d => d > 0 ? `en ${nf(d)} días` : d === 0 ? 'vence hoy' : `venció hace ${nf(-d)} días`;
-    if (a.kind === 'date') {
+    if (a.kind === 'rec') {   // período a pagar, vencimiento, días y monto de la última cuota
+      sub = `${esc(ymLabel(a.periodo))} · vence ${fmtDate(a.iso)} · ${whenTxt(a.days)}${a.monto ? ` · <span class="num">${money(a.monto)}</span>` : ''}`;
+      big = `${nf(a.days)}<small>días</small>`;
+    } else if (a.kind === 'date') {
       sub = `Vence ${fmtDate(a.iso)} · ${whenTxt(a.days)}`;
       big = `${nf(a.days)}<small>días</small>`;
     } else {
@@ -1239,8 +1356,9 @@ function alertRowHTML(a) {
   if (a.lastReview) sub += ` · revisado el ${esc(fmtDate(a.lastReview.fecha))}`;
   const acts = [];
   if (a.st === 'none' || a.pending) acts.push(`<button class="btn btn-ghost btn-sm" type="button" data-action="onboard-one" data-id="${esc(a.id)}">${a.kind === 'date' ? 'Cargar fecha' : 'Cargar última vez'}</button>`);
+  if (a.kind === 'rec') acts.push(`<button class="btn btn-ghost btn-sm" type="button" data-action="rec-history" data-id="${esc(a.id)}">${icon('chart', 16)}Historial</button>`);
   if (a.tipo === 'inspeccion') acts.push(`<button class="btn btn-ghost btn-sm" type="button" data-action="mark-reviewed" data-id="${esc(a.id)}">${icon('check', 16)}Marcar revisado</button>`);
-  return `<div class="alert" data-s="${a.st}" data-id="${esc(a.id)}" data-action="alert-expense" role="button" tabindex="0" aria-label="Registrar gasto de ${esc(a.label)}">
+  return `<div class="alert" data-s="${a.st}" data-id="${esc(a.id)}" data-action="alert-expense" role="button" tabindex="0" aria-label="${a.kind === 'rec' ? 'Registrar pago' : 'Registrar gasto'} de ${esc(a.label)}">
     <div class="alert-ico">${icon(a.icon, 22)}</div>
     <div style="min-width:0"><div class="alert-name">${esc(a.label)}</div><div class="alert-sub">${sub}</div></div>
     <div class="alert-right"><div class="alert-big num font-black">${big}</div><span class="badge">${badge}</span></div>
@@ -1252,11 +1370,16 @@ const unconfigured = A => A.filter(a => a.st === 'none');
 const onboardCTA = A => { const n = unconfigured(A).length;
   return n ? `<button class="btn btn-primary btn-block" type="button" data-action="onboarding">${icon('clipboard', 16)}Cargar la última vez de ${nf(n)} ${n === 1 ? 'ítem' : 'ítems'} sin datos</button>` : ''; };
 
+// Tarjeta para dar de alta los recurrentes que faltan (ADR §7: si no había fecha del seguro, no se crea nada solo).
+// En Resumen solo se ofrece el seguro (obligatorio); la patente se agrega desde Vencimientos o Ajustes.
+const recCTA = (only = null) => { const miss = Object.keys(REC_TIPOS).filter(t => (!only || only.includes(t)) && !((state.settings || {}).recurrentes || {})[t]);
+  return miss.map(t => `<button class="btn btn-ghost btn-block" type="button" data-action="rec-edit" data-tipo="${t}">${icon(REC_TIPOS[t].icon, 16)}Agregar ${esc(REC_TIPOS[t].nombre.toLowerCase())} como pago recurrente</button>`).join(''); };
+
 function renderRadar(D) {
   const box = $('#radar-list');
   if (!allLoaded()) { box.innerHTML = skeleton(4); return; }
   const A = computeAlerts(D);
-  box.innerHTML = onboardCTA(A) + GROUPS.map(g => {
+  box.innerHTML = onboardCTA(A) + recCTA() + GROUPS.map(g => {
     const its = A.filter(a => a.grupo === g);   // ya vienen ordenados: rojo, amarillo, verde, sin configurar
     if (!its.length) return '';
     const red = its.filter(a => a.st === 'red').length, yel = its.filter(a => a.st === 'yellow').length;
@@ -1288,7 +1411,7 @@ function renderResumen(D) {
     </div>`;
   const A = computeAlerts(D), hot = A.filter(a => a.st === 'red' || a.st === 'yellow'), ok = A.filter(a => a.st === 'green');
   queueMicrotask(() => { const d = $('#next-ok'); if (d) d.addEventListener('toggle', () => { state.ui.okOpen = d.open; }); });
-  next.innerHTML = onboardCTA(A)
+  next.innerHTML = onboardCTA(A) + recCTA(['seguro'])
     + (hot.length ? hot.map(alertRowHTML).join('') : '<div class="empty">Nada vencido ni próximo a vencer.</div>')
     + (ok.length ? `<details class="more-info" id="next-ok" ${state.ui.okOpen ? 'open' : ''}><summary>${nf(ok.length)} al día</summary><div class="alerts" style="margin-top:10px">${ok.map(alertRowHTML).join('')}</div></details>` : '');
 }
@@ -1357,6 +1480,16 @@ function renderFuel(D) {
   }).join('')}</ul>${list.length > shown.length ? `<button class="btn btn-ghost btn-sm more btn-block" type="button" data-action="more-refuels">Ver más (${list.length - shown.length})</button>` : ''}`;
 }
 
+// Etiqueta del vínculo de un gasto: el recurrente con su período, o la alerta que lo originó.
+function linkTag(it) {
+  const rid = recIdOf(it);
+  if (rid) {
+    const r = recById(rid), per = isYM(it.periodo) ? it.periodo : datePart(it.fecha).slice(0, 7);
+    return `<span class="tag ok">${esc((r && r.nombre) || REC_TIPOS[rid].nombre)} · ${esc(ymLabel(per))}${it.clase === 'ajuste' ? ' · ajuste' : ''}</span>`;
+  }
+  const a = it.vencimientoId && alertById(it.vencimientoId);
+  return a ? `<span class="tag ok">${esc(a.label)}</span>` : '';
+}
 function renderExpenses() {
   const chips = $('#gx-chips'), box = $('#gx-history');
   if (!allLoaded()) { chips.innerHTML = ''; box.innerHTML = skeleton(3); return; }
@@ -1378,7 +1511,7 @@ function renderExpenses() {
       return `<li class="item">
         <div class="item-ico" style="color:${c.color}">${icon(c.icon, 18)}</div>
         <div style="min-width:0"><div class="item-title">${esc(it.tipo || c.short)}</div>
-          <div class="item-sub"><span class="num">${fmtDate(it.fecha)}</span><span class="tag">${esc(c.short)}</span>${it.vencimientoId && alertById(it.vencimientoId) ? `<span class="tag ok">${esc(alertById(it.vencimientoId).label)}</span>` : ''}${subLine(g, it) ? `<span>${subLine(g, it)}</span>` : ''}</div></div>
+          <div class="item-sub"><span class="num">${fmtDate(it.fecha)}</span><span class="tag">${esc(c.short)}</span>${linkTag(it)}${subLine(g, it) ? `<span>${subLine(g, it)}</span>` : ''}</div></div>
         <div class="item-right"><div class="item-amt num font-black">${money(it.monto)}</div></div>
         <div class="item-actions">
           <button class="icon-btn" type="button" data-action="edit-expense" data-id="${esc(it.id)}" aria-label="Editar gasto">${icon('edit', 18)}</button>
@@ -1709,6 +1842,7 @@ function lastExpenseFor(a) {
     .sort((x, y) => String(y.fecha).localeCompare(String(x.fecha)))[0] || null;
 }
 function openAlertExpense(id) {
+  const r = recById(id); if (r) return openRecPayment(r);
   const a = alertById(id); if (!a) return;
   const last = lastExpenseFor(a), isDate = a.tipo === 'fecha', venc = ((state.settings || {}).vencimientos || {})[a.key];
   const base = isDate && isValidDate(venc) ? datePart(venc) : todayISO();
@@ -1717,22 +1851,51 @@ function openAlertExpense(id) {
       local: last ? last.local : '', odometro: isDate ? null : derive().kmNow } });
 }
 
+// Pago de un recurrente (T2.3): mismo formulario de gasto, con el monto de la última cuota, el período que toca
+// (el primero sin pagar, no el mes de hoy) y, en modo manual, el próximo vencimiento prellenado (+mesesSugeridos).
+function openRecPayment(r) {
+  const t = REC_TIPOS[r.tipo], today = todayISO(), stx = recStatus(r, recPayments(r), today), cs = recCuotas(r), lc = cs[cs.length - 1] || null;
+  let next = null;
+  if (r.modo === 'manual') {
+    const m = intIn(r.mesesSugeridos, 1, 24, 2);
+    next = addMonths(isValidDate(r.proximo) ? r.proximo : today, m);
+    if (next <= today) next = addMonths(today, m);
+  }
+  openExpenseModal(null, { alert: { id: r.id, label: r.nombre || t.nombre }, rec: r, last: lc ? lc.e : null, next, periodo: stx ? stx.periodo : today.slice(0, 7),
+    prefill: { categoria: 'TRAMITES', tipo: lc ? lc.e.tipo : (r.nombre || t.nombre), monto: lc ? Math.round(lc.monto / lc.cubre * 100) / 100 : (Number(r.montoEstimado) > 0 ? r.montoEstimado : undefined),
+      local: lc ? lc.e.local || '' : r.aseguradora || '', odometro: null } });
+}
+
 /* ---- Gastos: modal de alta/edición ---- */
 function openExpenseModal(existing, ctx = null) {
   const it = existing || (ctx && ctx.prefill) || {};
-  const link = ctx ? ctx.alert : null, last = ctx ? ctx.last : null;
+  // `head`: lo que originó el gasto. `link`: vencimiento o service (vencimientoId). `rec`: pago recurrente (recurrenteId).
+  const rec = ctx ? ctx.rec || null : existing && recIdOf(existing) ? recById(recIdOf(existing)) : null;
+  const head = ctx ? ctx.alert : null, link = rec ? null : head, last = ctx ? ctx.last : null;
+  const per = existing ? (isYM(existing.periodo) ? existing.periodo : datePart(existing.fecha).slice(0, 7)) : ctx && ctx.periodo;
+  const cubre0 = existing ? intIn(existing.cubre, 1, 12, 1) : 1, clase0 = existing && existing.clase === 'ajuste' ? 'ajuste' : 'cuota';
   const tipos = [...new Set(state.expenses.map(e => e.tipo).filter(Boolean))].sort();
-  const el = openModal({ title: existing ? 'Editar gasto' : link ? `Registrar · ${link.label}` : 'Nuevo gasto', focus: '#gx-monto', body: `
+  const el = openModal({ title: existing ? 'Editar gasto' : head ? `Registrar · ${head.label}` : 'Nuevo gasto', focus: '#gx-monto', body: `
     <form id="gx-form" class="sheet-body" novalidate autocomplete="off">
-      ${link ? `<p class="gx-last" id="gx-last">${last ? `Pago anterior: <b class="num">${money(last.monto)}</b> el ${esc(fmtDate(last.fecha))}${last.local ? ` · ${esc(last.local)}` : ''}. Lo precargamos; cambialo si este es distinto.` : 'No hay pagos anteriores registrados para este ítem.'}</p>` : ''}
+      ${head ? `<p class="gx-last" id="gx-last">${last ? `Pago anterior: <b class="num">${money(last.monto)}</b> el ${esc(fmtDate(last.fecha))}${last.local ? ` · ${esc(last.local)}` : ''}. Lo precargamos; cambialo si este es distinto.` : 'No hay pagos anteriores registrados para este ítem.'}</p>` : ''}
       <div class="field"><label for="gx-monto">Monto ($ ARS)</label><input id="gx-monto" class="big num" inputmode="decimal" enterkeyhint="next" value="${it.monto !== undefined ? esc(String(it.monto).replace('.', ',')) : ''}" required></div>
+      ${rec ? `<p class="gx-var" id="gx-var" hidden></p>
+      <p class="form-warn" id="gx-dup" role="status" hidden></p>
+      <div class="field"><label for="gx-periodo">Período que pagás</label><input id="gx-periodo" type="month" value="${esc(per || '')}" required></div>
+      <details class="more-info"><summary>Cuotas y ajustes</summary>
+        <div class="grid-2" style="margin-top:10px">
+          <div class="field"><label for="gx-cubre">Cubre</label><select id="gx-cubre">${Array.from({ length: 12 }, (_, i) => i + 1).map(n => `<option value="${n}" ${n === cubre0 ? 'selected' : ''}>${n} ${n === 1 ? 'período' : 'períodos'}</option>`).join('')}</select></div>
+          <div class="field"><label for="gx-clase">Clase</label><select id="gx-clase"><option value="cuota" ${clase0 === 'cuota' ? 'selected' : ''}>Cuota</option><option value="ajuste" ${clase0 === 'ajuste' ? 'selected' : ''}>Ajuste o diferencia</option></select></div>
+        </div>
+        <p class="help" style="margin:0">Un pago de dos cuotas juntas cubre 2 períodos. Un ajuste (diferencia de póliza, recargo) suma al gasto pero no paga un período.</p>
+      </details>` : ''}
       <div class="field"><label for="gx-cat">Categoría</label><select id="gx-cat">${CAT_KEYS.map(k => `<option value="${k}" ${(it.categoria || 'PREVENTIVO') === k ? 'selected' : ''}>${esc(CATS[k].label)}</option>`).join('')}</select></div>
       <div class="field"><label for="gx-tipo">Tipo</label><input id="gx-tipo" list="gx-tipos" maxlength="60" enterkeyhint="done" placeholder="Cambio de aceite, Lavadero, VTV…" value="${esc(it.tipo || '')}"><datalist id="gx-tipos">${tipos.map(t => `<option value="${esc(t)}">`).join('')}</datalist></div>
       <div class="grid-2">
         <div class="field"><label for="gx-fecha">Fecha</label><input id="gx-fecha" type="date" value="${esc(datePart(it.fecha) || todayISO())}" required></div>
         <div class="field"><label for="gx-odo">Odómetro (opcional)</label><input id="gx-odo" class="num" inputmode="numeric" value="${Number.isFinite(it.odometro) ? it.odometro : ''}"></div>
       </div>
-      ${ctx && ctx.next ? `<div class="field"><label for="gx-next">Próximo vencimiento</label><input id="gx-next" type="date" value="${esc(ctx.next)}"><span class="help" style="margin:0">Se actualiza el vencimiento de ${esc(link.label)} al guardar.</span></div>` : ''}
+      ${ctx && ctx.next ? `<div class="field"><label for="gx-next">Próximo vencimiento</label><input id="gx-next" type="date" value="${esc(ctx.next)}"><span class="help" style="margin:0">Se actualiza el vencimiento de ${esc(head.label)} al guardar.</span></div>` : ''}
       <div class="field"><label for="gx-desc">Descripción (opcional)</label><input id="gx-desc" maxlength="200" value="${esc(it.descripcion || '')}"></div>
       <div class="field"><label for="gx-local">Local (opcional)</label><input id="gx-local" maxlength="80" value="${esc(it.local || '')}"></div>
       <div id="gx-resets" class="stack">
@@ -1740,7 +1903,7 @@ function openExpenseModal(existing, ctx = null) {
         <p class="help" id="gx-r-none" style="margin:0" hidden>Ningún contador coincide con este tipo. Para reiniciar uno, escribí el tipo del service (por ejemplo "Cambio de aceite").</p>
       </div>
       <p id="gx-error" class="form-error" role="alert" hidden></p>
-      <div class="sheet-foot"><button class="btn btn-ghost" type="button" data-modal-close>Cancelar</button><button class="btn btn-primary" type="submit">${existing ? 'Guardar cambios' : 'Guardar gasto'}</button></div>
+      <div class="sheet-foot${rec ? ' sticky' : ''}"><button class="btn btn-ghost" type="button" data-modal-close>Cancelar</button><button class="btn btn-primary" type="submit">${existing ? 'Guardar cambios' : rec ? 'Registrar pago' : 'Guardar gasto'}</button></div>
     </form>` });
   enterFlow($('#gx-form', el), ['gx-tipo'], () => $('#gx-monto', el).value.trim() !== '' && parseNum($('#gx-monto', el).value) >= 0);
   const toggleResets = () => { $('#gx-resets', el).hidden = $('#gx-cat', el).value !== 'PREVENTIVO'; };
@@ -1755,6 +1918,32 @@ function openExpenseModal(existing, ctx = null) {
     $('#gx-r-none', el).hidden = any || !tipo.trim();
   };
   $('#gx-tipo', el).addEventListener('input', () => syncResets(true)); syncResets(!existing);
+  // Pago recurrente: variación % respecto de la cuota anterior y aviso si el período ya está pagado (antes de guardar).
+  let dupOk = false;
+  const submitBtn = $('button[type=submit]', el), submitTxt = submitBtn.textContent;
+  const recCalc = () => {
+    const p = $('#gx-periodo', el).value, cubre = Number($('#gx-cubre', el).value) || 1, clase = $('#gx-clase', el).value, m = parseNum($('#gx-monto', el).value);
+    const prev = clase === 'cuota' && isYM(p) ? recCuotas(rec, existing ? existing.id : null).filter(x => x.periodo < p).pop() || null : null;
+    const pct = prev && m > 0 ? pctChange(m / cubre, prev.monto / prev.cubre) : null;
+    const mine = isYM(p) ? coveredBy({ periodo: p, cubre }) : [];
+    const dup = clase === 'cuota' ? recPayments(rec).filter(x => x.clase === 'cuota' && (!existing || x.e.id !== existing.id) && coveredBy(x).some(ym => mine.includes(ym))) : [];
+    return { periodo: p, cubre, clase, prev, pct, dup };
+  };
+  const recShow = () => {
+    const c = recCalc(), v = $('#gx-var', el), w = $('#gx-dup', el), d = c.dup[0];
+    v.hidden = c.pct === null;
+    v.innerHTML = c.pct === null ? '' : `<b class="num">${fmtPct(c.pct)}</b> respecto de la cuota anterior (<span class="num">${money(c.prev.monto / c.prev.cubre)}</span>, ${esc(ymLabel(c.prev.periodo))})`;
+    w.hidden = !d;
+    w.textContent = d ? `Ya registraste ${ymLabel(d.periodo)}${d.cubre > 1 ? ` (${d.cubre} períodos)` : ''}: ${money(d.monto)} el ${fmtDate(d.e.fecha)}.${dupOk ? ' Si es otro pago, tocá «Guardar igual».' : ''}` : '';
+    return c;
+  };
+  if (rec) {
+    const reset = () => { dupOk = false; submitBtn.textContent = submitTxt; recShow(); };
+    ['#gx-periodo', '#gx-cubre', '#gx-clase'].forEach(q => $(q, el).addEventListener('change', reset));
+    $('#gx-periodo', el).addEventListener('input', reset);
+    $('#gx-monto', el).addEventListener('input', recShow);
+    recShow();
+  }
   $('#gx-form', el).addEventListener('submit', async ev => {
     ev.preventDefault();
     const err = m => { const p = $('#gx-error', el); p.textContent = m; p.hidden = !m; return false; };
@@ -1768,15 +1957,24 @@ function openExpenseModal(existing, ctx = null) {
     const next = $('#gx-next', el) ? $('#gx-next', el).value : '';
     if (next && !isValidDate(next)) return err('Ingresá una fecha válida para el próximo vencimiento.');
     if (next && next <= fecha) return err('El próximo vencimiento tiene que ser posterior a la fecha del pago.');
+    let recF = {};
+    if (rec) {
+      const c = recShow();
+      if (!isYM(c.periodo)) return err('Elegí el período que pagás.');
+      if (c.dup.length && !dupOk) { dupOk = true; submitBtn.textContent = 'Guardar igual'; recShow(); err(''); return; }   // avisa antes de duplicar
+      recF = { recurrenteId: rec.id, periodo: c.periodo, cubre: c.cubre, clase: c.clase, ...(c.pct !== null ? { variacionPct: c.pct } : {}) };
+    } else if (existing) recF = recFieldsOf(existing);   // vínculo a un recurrente que ya no existe: se conserva tal cual
     const time = existing && datePart(existing.fecha) === fecha ? (String(existing.fecha).slice(11) || '12:00:00') : nowTime();
     await store.save('expenses', {
       ...(existing ? { id: existing.id } : {}), fecha: `${fecha}T${time}`, odometro: odo, categoria: cat,
       tipo: $('#gx-tipo', el).value.trim() || CATS[cat].short, descripcion: $('#gx-desc', el).value.trim(), monto, local: $('#gx-local', el).value.trim(),
       grupoId: existing?.grupoId || null, origen: existing?.origen || 'manual',
-      ...((link || existing?.vencimientoId) ? { vencimientoId: link ? link.id : existing.vencimientoId } : {})   // qué alerta originó el gasto
+      ...((link || existing?.vencimientoId) ? { vencimientoId: link ? link.id : existing.vencimientoId } : {}),   // qué alerta originó el gasto
+      ...recF
     });
     const patch = {};
     if (next && link) patch.vencimientos = { [link.key]: next };
+    if (next && rec && ctx) patch.recurrentes = { [rec.id]: { proximo: next } };   // patente: pagar adelanta el próximo vencimiento
     // Los contadores nunca retroceden: editar o cargar un gasto viejo no pisa un service más reciente.
     const cur = state.settings || {};
     for (const a of resets) {
@@ -1915,6 +2113,117 @@ async function markReviewed(id) {
   toast(`${a.label}: revisado hoy.`, 'ok');
 }
 
+/* ---- Pagos recurrentes: alta y edición (T2.2) ---- */
+function openRecurrenteModal(tipo) {
+  const t = REC_TIPOS[tipo]; if (!t) return;
+  const cur = ((state.settings || {}).recurrentes || {})[tipo], isNew = !cur, today = todayISO();
+  const r = { ...recDefaults(tipo), ...(cur || {}) };
+  if (isNew) { if (r.modo === 'mensual') { r.diaVencimiento = Number(today.slice(8, 10)); r.desde = today.slice(0, 7); } else r.proximo = addMonths(today, 2); }
+  if (!isYM(r.desde)) r.desde = today.slice(0, 7);
+  if (!isValidDate(r.proximo)) r.proximo = '';
+  const seg = tipo === 'seguro';
+  const el = openModal({ title: `${isNew ? 'Agregar' : 'Editar'} ${t.nombre.toLowerCase()}`, focus: '#rc-monto', body: `
+    <form id="rc-form" class="sheet-body" novalidate autocomplete="off">
+      <div class="field"><label for="rc-nombre">Nombre</label><input id="rc-nombre" maxlength="40" value="${esc(r.nombre)}"></div>
+      <div class="field"><label for="rc-modo">Cómo vence</label><select id="rc-modo">${Object.entries(REC_MODOS).map(([k, l]) => `<option value="${k}" ${r.modo === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></div>
+      <div class="grid-2" data-modo="mensual">
+        <div class="field"><label for="rc-dia">Día de vencimiento</label><input id="rc-dia" class="num" inputmode="numeric" maxlength="2" value="${Number.isInteger(r.diaVencimiento) ? r.diaVencimiento : ''}"></div>
+        <div class="field"><label for="rc-desde">Primer mes a controlar</label><input id="rc-desde" type="month" value="${esc(r.desde)}"></div>
+      </div>
+      <div class="grid-2" data-modo="manual">
+        <div class="field"><label for="rc-proximo">Próximo vencimiento</label><input id="rc-proximo" type="date" value="${esc(datePart(r.proximo))}"></div>
+        <div class="field"><label for="rc-meses">Meses entre pagos (sugerido)</label><input id="rc-meses" class="num" inputmode="numeric" maxlength="2" value="${intIn(r.mesesSugeridos, 1, 24, 2)}"></div>
+      </div>
+      <div class="field"><label for="rc-monto">Monto estimado ($ ARS, opcional)</label><input id="rc-monto" class="num" inputmode="decimal" value="${Number(r.montoEstimado) > 0 ? esc(String(r.montoEstimado).replace('.', ',')) : ''}"><span class="help" style="margin:0">Si ya hay pagos, se precarga el último.</span></div>
+      ${seg ? `<div class="grid-2">
+        <div class="field"><label for="rc-aseg">Aseguradora (opcional)</label><input id="rc-aseg" maxlength="60" value="${esc(r.aseguradora)}"></div>
+        <div class="field"><label for="rc-poliza">Póliza (opcional)</label><input id="rc-poliza" maxlength="40" value="${esc(r.poliza)}"></div>
+      </div>
+      <div class="field"><label for="rc-inicio">Inicio de la póliza actual (opcional)</label><input id="rc-inicio" type="month" value="${esc(isYM(r.inicioPoliza) ? r.inicioPoliza : '')}"><span class="help" style="margin:0">Sirve para ver el ajuste acumulado de esta póliza.</span></div>` : ''}
+      ${isNew ? '' : `<label class="check"><input type="checkbox" id="rc-activo" ${r.activo !== false ? 'checked' : ''}> Activo (si lo desactivás, sale de las alertas y el historial queda)</label>`}
+      <p id="rc-error" class="form-error" role="alert" hidden></p>
+      <div class="sheet-foot"><button class="btn btn-ghost" type="button" data-modal-close>Cancelar</button><button class="btn btn-primary" type="submit">Guardar</button></div>
+    </form>` });
+  const syncModo = () => { const m = $('#rc-modo', el).value; $$('[data-modo]', el).forEach(b => { b.hidden = b.dataset.modo !== m; }); };
+  $('#rc-modo', el).addEventListener('change', syncModo); syncModo();
+  $('#rc-form', el).addEventListener('submit', async ev => {
+    ev.preventDefault();
+    const err = m => { const p = $('#rc-error', el); p.textContent = m; p.hidden = !m; };
+    const modo = $('#rc-modo', el).value, val = id => ($('#' + id, el) ? $('#' + id, el).value.trim() : '');
+    const dia = parseKm(val('rc-dia')), meses = parseKm(val('rc-meses')), montoRaw = val('rc-monto'), monto = montoRaw ? parseNum(montoRaw) : null;
+    const desde = val('rc-desde'), proximo = val('rc-proximo'), inicio = val('rc-inicio');
+    if (!REC_MODOS[modo]) return err('Elegí cómo vence.');
+    if (modo === 'mensual' && !(Number.isInteger(dia) && dia >= 1 && dia <= 31)) return err('El día de vencimiento va del 1 al 31.');
+    if (modo === 'mensual' && !isYM(desde)) return err('Elegí el primer mes a controlar.');
+    if (modo === 'manual' && !isValidDate(proximo)) return err('Ingresá la fecha del próximo vencimiento.');
+    if (modo === 'manual' && !(Number.isInteger(meses) && meses >= 1 && meses <= 24)) return err('Los meses entre pagos van de 1 a 24.');
+    if (montoRaw && !(monto >= 0)) return err('Ingresá un monto válido.');
+    if (inicio && !isYM(inicio)) return err('Mes de inicio de póliza inválido.');
+    const obj = { ...r, id: tipo, tipo, modo, nombre: val('rc-nombre') || t.nombre,
+      diaVencimiento: modo === 'mensual' ? dia : (Number.isInteger(r.diaVencimiento) ? r.diaVencimiento : null),
+      desde: modo === 'mensual' ? desde : (isYM(r.desde) ? r.desde : null),
+      proximo: modo === 'manual' ? proximo : (isValidDate(r.proximo) ? datePart(r.proximo) : null),
+      mesesSugeridos: modo === 'manual' ? meses : intIn(r.mesesSugeridos, 1, 24, 2),
+      montoEstimado: monto, aseguradora: seg ? val('rc-aseg') : '', poliza: seg ? val('rc-poliza') : '', inicioPoliza: seg && inicio ? inicio : null,
+      activo: isNew ? true : $('#rc-activo', el).checked };
+    await store.saveSettings({ recurrentes: { [tipo]: obj } });
+    closeModal(true); toast(isNew ? `${obj.nombre} agregado.` : `${obj.nombre} actualizado.`, 'ok');
+  });
+}
+
+// Sección "Pagos recurrentes" de Ajustes: estado de cada uno, editar, historial y alta de los que faltan.
+function renderRecurrentes() {
+  const box = $('#rec-list'); if (!box) return;
+  if (!allLoaded()) { box.innerHTML = skeleton(2); return; }
+  const recs = recurrentesList();
+  box.innerHTML = recs.map(r => {
+    const stx = r.activo !== false ? recStatus(r, recPayments(r)) : null;
+    const modo = r.modo === 'manual' ? (isValidDate(r.proximo) ? `Próximo vencimiento ${fmtDate(r.proximo)}` : 'Falta la fecha del próximo vencimiento') : `Mensual · vence el día ${nf(r.diaVencimiento || 0)}`;
+    const est = r.activo === false ? '<span class="tag">Inactivo</span>' : stx ? `<span class="tag ${stx.st === 'green' ? 'ok' : 'warn'}">${{ red: 'Vencido', yellow: 'Pendiente', green: 'Al día' }[stx.st]}</span>` : '';
+    return `<div class="rec-row" data-rec="${esc(r.id)}">
+      <div style="min-width:0"><div class="item-title">${esc(r.nombre)} ${est}</div><div class="item-sub">${esc(modo)}${r.aseguradora ? ` · ${esc(r.aseguradora)}` : ''}</div></div>
+      <div class="rec-acts"><button class="btn btn-ghost btn-sm" type="button" data-action="rec-history" data-id="${esc(r.id)}">${icon('chart', 16)}Historial</button>
+        <button class="btn btn-ghost btn-sm" type="button" data-action="rec-edit" data-tipo="${esc(r.id)}">${icon('edit', 16)}Editar</button></div></div>`;
+  }).join('') + recCTA();
+}
+
+/* ---- Historial de un recurrente (T2.5): pagos por período, variación y evolución del monto ---- */
+function recChartSVG(pts) {
+  const p = pts.slice(-36);
+  if (p.length < 2) return '<div class="empty">Con dos pagos o más se ve la evolución del monto.</div>';
+  const W = 340, H = 170, pl = 8, pr = 8, pt = 18, pb = 22;
+  const ys = p.map(x => x.monto); let lo = Math.min(...ys), hi = Math.max(...ys); if (hi - lo < 1) { lo -= 1; hi += 1; }
+  const X = i => pl + (W - pl - pr) * i / (p.length - 1), Y = v => pt + (H - pt - pb) * (1 - (v - lo) / (hi - lo));
+  const line = p.map((x, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)} ${Y(x.monto).toFixed(1)}`).join(' ');
+  return `<svg class="chart" id="rh-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Evolución del monto por período">
+    <path d="${line}" fill="none" stroke="var(--blue)" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>
+    ${p.map((x, i) => `<circle cx="${X(i).toFixed(1)}" cy="${Y(x.monto).toFixed(1)}" r="3" fill="var(--blue)"><title>${esc(ymLabel(x.periodo))}: ${money(x.monto)}</title></circle>`).join('')}
+    <text class="axis l" x="${pl}" y="11">${money(hi)}</text><text class="axis l" x="${pl}" y="${H - pb + 14}">${money(lo)}</text>
+    <text class="axis r" x="${W - pr}" y="${H - 4}">${esc(ymLabel(p[0].periodo))} → ${esc(ymLabel(p[p.length - 1].periodo))}</text></svg>`;
+}
+function openRecHistory(id) {
+  const r = recById(id); if (!r) return;
+  const h = recHistory(r), pays = [...h.pays].reverse();
+  // Variación de cada cuota: la guardada al registrar; si no hay (pagos viejos), se calcula contra la cuota anterior.
+  const cuotas = h.pays.filter(p => p.clase === 'cuota');
+  const varOf = p => { if (p.clase !== 'cuota') return null; if (Number.isFinite(p.e.variacionPct)) return p.e.variacionPct;
+    const i = cuotas.indexOf(p); return i > 0 ? pctChange(p.monto / p.cubre, cuotas[i - 1].monto / cuotas[i - 1].cubre) : null; };
+  openModal({ title: `Historial · ${r.nombre}`, wide: true, focus: '[data-modal-close]', body: `
+    <div class="grid-2">
+      <div class="tile"><div class="tile-label">Ajuste acumulado</div><div class="tile-val num" id="rh-acum">${h.acum !== null ? fmtPct(h.acum) : '—'}</div>
+        <div class="tile-sub">${h.first && h.last && h.pts.length > 1 ? `${esc(ymLabel(h.first.periodo))} ${money(h.first.monto)} → ${esc(ymLabel(h.last.periodo))} ${money(h.last.monto)}` : 'Faltan pagos'}</div></div>
+      <div class="tile"><div class="tile-label">Total pagado</div><div class="tile-val num">${money(h.total)}</div><div class="tile-sub">${nf(h.pays.length)} ${h.pays.length === 1 ? 'pago' : 'pagos'}</div></div>
+    </div>
+    ${h.acumPoliza ? `<p class="help" id="rh-poliza">Desde el inicio de la póliza (${esc(ymLabel(h.acumPoliza.desde))}): <b class="num">${fmtPct(h.acumPoliza.pct)}</b></p>` : ''}
+    <div style="margin:12px 0">${recChartSVG(h.pts)}</div>
+    ${pays.length ? `<ul class="list" id="rh-list">${pays.map(p => { const v = varOf(p); return `<li class="item rh-item" data-periodo="${esc(p.periodo)}">
+      <div style="min-width:0"><div class="item-title">${esc(ymLabel(p.periodo))}${p.cubre > 1 ? ` <span class="tag">${nf(p.cubre)} períodos</span>` : ''}${p.clase === 'ajuste' ? ' <span class="tag warn">Ajuste</span>' : ''}</div>
+        <div class="item-sub"><span class="num">${fmtDate(p.e.fecha)}</span>${p.e.local ? `<span>${esc(p.e.local)}</span>` : ''}</div></div>
+      <div class="item-right"><div class="num font-black">${money(p.monto)}</div>${v !== null ? `<div class="num rh-var">${fmtPct(v)}</div>` : ''}</div></li>`; }).join('')}</ul>`
+      : '<div class="empty">Todavía no hay pagos registrados. Tocá la alerta para registrar el primero.</div>'}
+    <div class="sheet-foot"><button class="btn btn-ghost" type="button" data-action="rec-edit" data-tipo="${esc(r.id)}">Editar</button><button class="btn btn-primary" type="button" data-action="alert-expense" data-id="${esc(r.id)}">Registrar pago</button></div>` });
+}
+
 /* ---- Vista previa de importación ---- */
 function showPlanPreview(plan) {
   const rows = o => Object.entries(o).sort((a, b) => b[1] - a[1]).map(([k, n]) => `<tr><td>${esc(k)}</td><td class="r num">${nf(n)}</td></tr>`).join('');
@@ -1987,6 +2296,8 @@ const actions = {
   'more-expenses': () => { state.ui.gxLimit += 20; renderExpenses(); },
   'open-settings': () => openSettingsModal(),
   onboarding: () => openOnboarding(),
+  'rec-edit': el => openRecurrenteModal(el.dataset.tipo),
+  'rec-history': el => openRecHistory(el.dataset.id),
   'onboard-one': el => openOnboarding(el.dataset.id),
   'mark-reviewed': el => markReviewed(el.dataset.id),
   'alert-expense': el => openAlertExpense(el.dataset.id),
@@ -2054,7 +2365,8 @@ async function boot() {
   if (DEMO) {
     store = createMemoryStore();
     window.__garage = { state, store, derive, buildDrivvoPlan, buildJsonPlan, computeAlerts, serviceCounters,
-      parseCSV, finishPlan, executePlan, showPlanPreview, migrateSettings, SERVICE_ITEMS, DATE_ALERTS, GROUPS, openOnboarding, markReviewed, kmRef, openAlertExpense, lastExpenseFor };   // solo para pruebas locales (tests/smoke.mjs)
+      parseCSV, finishPlan, executePlan, showPlanPreview, migrateSettings, SERVICE_ITEMS, DATE_ALERTS, GROUPS, openOnboarding, markReviewed, kmRef, openAlertExpense, lastExpenseFor,
+      REC_TIPOS, recurrentesList, recPayments, recCuotas, recStatus, recHistory, migrateSeguro, openRecurrenteModal, openRecPayment, openRecHistory };   // solo para pruebas locales (tests/smoke.mjs)
     enterApp({ uid: 'demo', email: 'demo@local' });
     return;
   }

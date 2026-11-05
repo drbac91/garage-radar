@@ -108,8 +108,8 @@ async function main() {
         assert(api.includes(k), `window.__garage no expone ${k}`);
       assert(await page.locator('#screen-app').isVisible(), 'la pantalla principal no está visible');
       const s = await alertSummary(page);
-      eq(s.total, 32, 'cantidad de alertas (4 por fecha + 28 ítems del catálogo)');
-      eq(s.none, 32, 'sin datos, todas las alertas quedan sin configurar');
+      eq(s.total, 31, 'cantidad de alertas (3 por fecha + 28 ítems del catálogo; el seguro ahora es recurrente)');
+      eq(s.none, 31, 'sin datos, todas las alertas quedan sin configurar');
       await settle(page);
       eq(errors, [], 'errores de consola');
       await ctx.close();
@@ -172,6 +172,7 @@ async function main() {
       // km actual 214.600: rotación/alineación/balanceo vencen a los 215.000 (faltan 400 ≤ 1.000 de aviso); alineación y
       // balanceo además vencen por fecha el 01/12/2026 (26 días ≤ 30). Aceite: 219.100 km / 15/02/2027.
       const s = await alertSummary(page);
+      // El seguro del respaldo (vencimientos.seguro = 01/03/2027) migra a recurrente mensual: al día hasta marzo.
       eq(s, { total: 32, red: ['oblea'], yellow: ['ultimoAlineacionKm', 'ultimoBalanceoKm', 'ultimoRotacionKm', 'vtv'], green: ['pruebaHidraulica', 'seguro', 'ultimoAceiteKm'], none: 24 }, 'conteo de alertas con reloj fijo en 2026-11-05');
       eq(errors, [], 'errores de consola');
       await ctx.close();
@@ -268,7 +269,7 @@ async function main() {
       const progress = () => page.locator('.ob-progress').textContent();
       await page.locator('#radar-list [data-action=onboarding]').click();
       await page.locator('#ob-form').waitFor({ state: 'visible' });
-      eq(await progress(), 'Ítem 1 de 32 · Legal', 'primer ítem');
+      eq(await progress(), 'Ítem 1 de 31 · Legal', 'primer ítem');
       const first = await page.locator('#ob-form').getAttribute('id') && await page.evaluate(() => window.__garage.computeAlerts(window.__garage.derive()).find(a => a.st === 'none').id);
       // 1) cargar dato real
       await page.locator('#ob-fecha').fill('2027-05-01');
@@ -285,7 +286,7 @@ async function main() {
       eq([first, mid.vtv, second, mid.na], ['vtv', '2027-05-01', 'oblea', { oblea: true }], 'respuestas guardadas al salir');
       await page.locator('#radar-list [data-action=onboarding]').click();
       await page.locator('#ob-form').waitFor({ state: 'visible' });
-      eq(await progress(), 'Ítem 1 de 30 · GNC', 'retoma con los 30 pendientes');
+      eq(await progress(), 'Ítem 1 de 29 · GNC', 'retoma con los 29 pendientes');
       // 4) "no sé" en todo el resto
       for (let i = 0; i < 40 && await page.locator('#ob-form').count(); i++) {
         const before = await progress();
@@ -296,7 +297,7 @@ async function main() {
       await settle(page);
       const s = await alertSummary(page);
       const exp = await page.evaluate(() => window.__garage.state.expenses.length);
-      eq({ none: s.none, total: s.total, red: s.red.length, green: s.green, expenses: exp }, { none: 0, total: 31, red: 30, green: ['vtv'], expenses: 0 }, 'resultado del onboarding');
+      eq({ none: s.none, total: s.total, red: s.red.length, green: s.green, expenses: exp }, { none: 0, total: 30, red: 29, green: ['vtv'], expenses: 0 }, 'resultado del onboarding');
       eq(await page.locator('#radar-list [data-action=onboarding]').count(), 0, 'sin llamado a acción al terminar');
       eq(errors, [], 'errores de consola');
       await ctx.close();
@@ -444,30 +445,250 @@ async function main() {
       await ctx.close();
     });
 
-    await test('Tocar la alerta del seguro registra el pago con el monto anterior y lo vincula', async () => {
+    // ---------------------------- S2 · pagos recurrentes ----------------------------
+    const seedRec = (page, recs, expenses = []) => page.evaluate(async ([recs, expenses]) => {
+      const g = window.__garage;
+      if (expenses.length) await g.store.writeMany('expenses', expenses);
+      await g.store.saveSettings({ recurrentes: recs });
+    }, [recs, expenses]);
+    const recPago = (id, recurrenteId, periodo, monto, extra = {}) => ({ id, fecha: `${periodo}-08T10:00:00`, odometro: null, categoria: 'TRAMITES', tipo: 'Seguro', descripcion: '',
+      monto, local: '', grupoId: null, origen: 'manual', recurrenteId, periodo, cubre: 1, clase: 'cuota', ...extra });
+    const SEG = (extra = {}) => ({ seguro: { id: 'seguro', nombre: 'Seguro', tipo: 'seguro', modo: 'mensual', diaVencimiento: 10, desde: '2026-10', activo: true, ...extra } });
+
+    await test('T2.2 crear recurrente (seguro mensual y patente con próximo vencimiento +2 meses); desactivar conserva el historial', async () => {
+      const { ctx, page, errors } = await openDemo(browser, base);
+      await goTab(page, 'ajustes');
+      // Seguro: día de vencimiento y monto estimado.
+      await page.locator('#rec-list [data-action=rec-edit][data-tipo=seguro]').click();
+      await page.locator('#rc-form').waitFor({ state: 'visible' });
+      eq(await page.evaluate(() => [document.querySelector('#rc-modo').value, document.querySelector('#rc-desde').value]), ['mensual', '2026-11'], 'el seguro arranca en modo mensual desde el mes actual');
+      await page.locator('#rc-dia').fill('10');
+      await page.locator('#rc-monto').fill('60000');
+      await page.locator('#rc-aseg').fill('Aseguradora <b>Ficticia</b>');
+      await page.locator('#rc-inicio').fill('2026-01');
+      await page.locator('#rc-form button[type=submit]').click();
+      await page.locator('#rc-form').waitFor({ state: 'detached' });
+      await settle(page);
+      const seg = await page.evaluate(() => { const r = window.__garage.state.settings.recurrentes.seguro;
+        return [r.tipo, r.modo, r.diaVencimiento, r.desde, r.montoEstimado, r.aseguradora, r.inicioPoliza, r.activo]; });
+      eq(seg, ['seguro', 'mensual', 10, '2026-11', 60000, 'Aseguradora <b>Ficticia</b>', '2026-01', true], 'seguro guardado');
+      assert(!(await page.locator('#rec-list b').count()), 'el nombre de la aseguradora no se escapó en Ajustes');
+      // Patente: sin día fijo; el próximo vencimiento se prellena a +2 meses.
+      await page.locator('#rec-list [data-action=rec-edit][data-tipo=patente]').click();
+      await page.locator('#rc-form').waitFor({ state: 'visible' });
+      eq(await page.evaluate(() => ['modo', 'proximo', 'meses'].map(k => document.querySelector('#rc-' + k).value)), ['manual', '2027-01-05', '2'], 'patente prellenada');
+      assert(await page.locator('#rc-dia').isHidden(), 'la patente no pide día fijo');
+      await page.locator('#rc-form button[type=submit]').click();
+      await page.locator('#rc-form').waitFor({ state: 'detached' });
+      await settle(page);
+      const al = await page.evaluate(() => { const g = window.__garage; return g.computeAlerts(g.derive()).filter(a => a.kind === 'rec').map(a => [a.id, a.st, a.iso, a.monto]); });
+      eq(al, [['seguro', 'yellow', '2026-11-10', 60000], ['patente', 'green', '2027-01-05', null]], 'alertas de los dos recurrentes');
+      // Cada pago de patente guarda el próximo vencimiento (prellenado a +2 meses, editable).
+      await page.evaluate(() => window.__garage.openAlertExpense('patente'));
+      eq(await page.evaluate(() => [gx('next'), gx('periodo')]), ['2027-03-05', '2027-01'], 'pago de patente: próximo vencimiento y período');
+      await page.locator('#gx-monto').fill('20000');
+      await page.locator('#gx-next').fill('2027-04-15');
+      await page.locator('#gx-form button[type=submit]').click();
+      await page.locator('#gx-form').waitFor({ state: 'detached' });
+      await settle(page);
+      eq(await page.evaluate(() => window.__garage.state.settings.recurrentes.patente.proximo), '2027-04-15', 'el pago actualiza el próximo vencimiento de la patente');
+      // Desactivar la patente: sale de las alertas y sus pagos quedan.
+      await page.locator('#rec-list [data-action=rec-edit][data-tipo=patente]').click();
+      await page.locator('#rc-activo').uncheck();
+      await page.locator('#rc-form button[type=submit]').click();
+      await page.locator('#rc-form').waitFor({ state: 'detached' });
+      await settle(page);
+      const off = await page.evaluate(() => { const g = window.__garage, r = g.recurrentesList().find(x => x.id === 'patente');
+        return [g.computeAlerts(g.derive()).some(a => a.id === 'patente'), g.recPayments(r).length, g.state.expenses.length]; });
+      eq(off, [false, 1, 1], 'patente desactivada: sin alerta, con historial');
+      assert((await page.locator('#rec-list [data-rec=patente]').textContent()).includes('Inactivo'), 'Ajustes no marca la patente como inactiva');
+      eq(errors, [], 'errores de consola');
+      await ctx.close();
+    });
+
+    await test('T2.2 migración seguro idempotente (también con la migración de neumáticos ya hecha, como en producción)', async () => {
+      const { ctx, page, errors } = await openDemo(browser, base);
+      const pure = await page.evaluate(() => {
+        const g = window.__garage, prod = { migraciones: { neumaticos3: true }, vencimientos: { seguro: '2026-11-10', vtv: '2027-01-01' } };
+        const p1 = g.migrateSettings(prod);
+        const merged = { ...prod, migraciones: { ...prod.migraciones, ...p1.migraciones }, recurrentes: p1.recurrentes };
+        return { p1, again: g.migrateSettings(merged), sinFecha: g.migrateSettings({ migraciones: { neumaticos3: true } }),
+          noAplica: g.migrateSeguro({ vencimientos: { seguro: '2026-12-01' }, noAplica: { seguro: true } }).recurrentes.seguro.activo,
+          yaExiste: g.migrateSeguro({ recurrentes: { seguro: { diaVencimiento: 3 } }, vencimientos: { seguro: '2026-12-01' } }),
+          enDateAlerts: g.DATE_ALERTS.some(a => a.id === 'seguro') };
+      });
+      eq([pure.p1.migraciones, pure.p1.recurrentes.seguro.modo, pure.p1.recurrentes.seguro.diaVencimiento, pure.p1.recurrentes.seguro.desde, pure.p1.recurrentes.seguro.activo],
+        [{ seguroRecurrente: true }, 'mensual', 10, '2026-11', true], 'primera migración');
+      eq([pure.again, pure.sinFecha, pure.noAplica, pure.yaExiste, pure.enDateAlerts], [{}, {}, false, { migraciones: { seguroRecurrente: true } }, false], 'idempotencia y casos borde');
+      // Por la suscripción real: migra una vez, no duplica la alerta y no pisa una edición posterior.
+      await saveSettings(page, { migraciones: { neumaticos3: true }, vencimientos: { seguro: '2026-11-10' } });
+      await settle(page);
+      await saveSettings(page, { recurrentes: { seguro: { diaVencimiento: 15 } } });
+      await saveSettings(page, { vencimientos: { vtv: '2027-01-01' } });
+      await settle(page);
+      const r = await page.evaluate(() => { const g = window.__garage, s = g.state.settings;
+        return [s.recurrentes.seguro.diaVencimiento, s.migraciones, s.vencimientos.seguro, g.computeAlerts(g.derive()).filter(a => a.id === 'seguro').map(a => a.kind)]; });
+      eq(r, [15, { neumaticos3: true, seguroRecurrente: true }, '2026-11-10', ['rec']], 'migración por la suscripción');
+      eq(errors, [], 'errores de consola');
+      await ctx.close();
+    });
+
+    await test('T2.3 registrar pago precarga último monto: 2 toques desde Resumen, gasto TRAMITES con recurrenteId y periodo', async () => {
       const { ctx, page, errors } = await openDemo(browser, base);
       await goTab(page, 'resumen');
+      // Historial de Drivvo sin vincular + fecha vieja del seguro (15ff551): migra a recurrente y precarga el último pago.
       await page.evaluate(() => window.__garage.store.writeMany('expenses', [
         { id: 'sg1', fecha: '2026-09-10T10:00:00', odometro: null, categoria: 'TRAMITES', tipo: 'Seguro Automotor', descripcion: '', monto: 55000, local: 'Aseguradora Ficticia', grupoId: null, origen: 'drivvo' },
         { id: 'sg2', fecha: '2026-10-10T10:00:00', odometro: null, categoria: 'TRAMITES', tipo: 'Seguro Automotor', descripcion: '', monto: 59000, local: 'Aseguradora Ficticia', grupoId: null, origen: 'drivvo' }]));
       await saveSettings(page, { vencimientos: { seguro: '2026-11-10' } });
       await settle(page);
-      await page.locator('#next-list .alert[data-id="seguro"] .alert-name').click();
+      await page.locator('#next-list .alert[data-id="seguro"] .alert-name').click();                 // toque 1
       await page.locator('#gx-form').waitFor({ state: 'visible' });
-      const f = await page.evaluate(() => ({ title: document.querySelector('#m-title').textContent, monto: gx('monto'), cat: gx('cat'), tipo: gx('tipo'), local: gx('local'), next: gx('next'),
-        last: document.querySelector('#gx-last').textContent }));
-      eq({ ...f, last: undefined }, { title: 'Registrar · Seguro', monto: '59000', cat: 'TRAMITES', tipo: 'Seguro Automotor', local: 'Aseguradora Ficticia', next: '2026-12-10', last: undefined }, 'formulario precargado');
+      const f = await page.evaluate(() => ({ title: document.querySelector('#m-title').textContent, monto: gx('monto'), cat: gx('cat'), tipo: gx('tipo'), local: gx('local'), periodo: gx('periodo'),
+        next: gx('next'), last: document.querySelector('#gx-last').textContent }));
+      eq({ ...f, last: undefined }, { title: 'Registrar · Seguro', monto: '59000', cat: 'TRAMITES', tipo: 'Seguro Automotor', local: 'Aseguradora Ficticia', periodo: '2026-11', next: null, last: undefined }, 'formulario precargado');
       assert(/59\.000/.test(f.last) && f.last.includes('10/10/2026'), `no muestra el pago anterior: "${f.last}"`);
-      await page.locator('#gx-monto').fill('63000');
+      await page.locator('#gx-form button[type=submit]').click();                                    // toque 2
+      await page.locator('#gx-form').waitFor({ state: 'detached' });
+      await settle(page);
+      const r = await page.evaluate(() => { const g = window.__garage, e = g.state.expenses.find(x => !['sg1', 'sg2'].includes(x.id)), a = g.computeAlerts(g.derive()).find(a => a.id === 'seguro');
+        return { monto: e.monto, fecha: e.fecha.slice(0, 10), cat: e.categoria, rec: e.recurrenteId, periodo: e.periodo, cubre: e.cubre, clase: e.clase, varPct: e.variacionPct, st: a.st, iso: a.iso }; });
+      eq(r, { monto: 59000, fecha: '2026-11-05', cat: 'TRAMITES', rec: 'seguro', periodo: '2026-11', cubre: 1, clase: 'cuota', varPct: 0, st: 'green', iso: '2026-12-10' }, 'pago registrado y próximo vencimiento adelantado');
+      await goTab(page, 'gastos');
+      assert((await page.locator('#gx-history .tag.ok').allTextContents()).some(t => /seguro · nov 2026/i.test(t)), 'la lista de gastos no muestra el vínculo con el recurrente');
+      eq(errors, [], 'errores de consola');
+      await ctx.close();
+    });
+
+    await test('T2.3 variación % correcta (por cuota, guardada en el gasto y conservada al editar)', async () => {
+      const { ctx, page, errors } = await openDemo(browser, base);
+      await seedRec(page, SEG(), [recPago('p10', 'seguro', '2026-10', 59000)]);
+      await settle(page);
+      await page.evaluate(() => window.__garage.openAlertExpense('seguro'));
+      const vtxt = () => page.locator('#gx-var').textContent();
+      await page.locator('#gx-monto').fill('64015');
+      assert((await vtxt()).startsWith('+8,5 %'), `variación al subir: "${await vtxt()}"`);
+      await page.locator('#gx-monto').fill('55000');
+      assert((await vtxt()).startsWith('-6,8 %'), `variación al bajar: "${await vtxt()}"`);
+      // Dos cuotas juntas: se compara el monto por cuota (118.000 / 2 = 59.000 → 0 %).
+      await page.locator('#gx-form details summary').click();
+      await page.locator('#gx-cubre').selectOption('2');
+      await page.locator('#gx-monto').fill('118000');
+      assert((await vtxt()).startsWith('0,0 %'), `variación con 2 cuotas: "${await vtxt()}"`);
+      await page.locator('#gx-cubre').selectOption('1');
+      await page.locator('#gx-monto').fill('64015');
       await page.locator('#gx-form button[type=submit]').click();
       await page.locator('#gx-form').waitFor({ state: 'detached' });
       await settle(page);
-      const r = await page.evaluate(() => { const g = window.__garage, e = g.state.expenses.find(x => !['sg1', 'sg2'].includes(x.id));
-        return { monto: e.monto, fecha: e.fecha.slice(0, 10), vinculo: e.vencimientoId, cat: e.categoria, venc: g.state.settings.vencimientos.seguro,
-          st: g.computeAlerts(g.derive()).find(a => a.id === 'seguro').st, last: g.lastExpenseFor(g.DATE_ALERTS.find(a => a.id === 'seguro')).monto }; });
-      eq(r, { monto: 63000, fecha: '2026-11-05', vinculo: 'seguro', cat: 'TRAMITES', venc: '2026-12-10', st: 'green', last: 63000 }, 'pago registrado y vencimiento adelantado');
+      const id = await page.evaluate(() => window.__garage.state.expenses.find(e => e.id !== 'p10').id);
+      eq(await page.evaluate(i => { const e = window.__garage.state.expenses.find(x => x.id === i); return [e.periodo, e.variacionPct]; }, id), ['2026-11', 8.5], 'variación guardada');
+      // Editar desde Gastos (sin contexto de alerta) mantiene el vínculo y recalcula la variación.
       await goTab(page, 'gastos');
-      assert((await page.locator('#gx-history .tag.ok').allTextContents()).includes('Seguro'), 'la lista de gastos no muestra el vínculo con la alerta');
+      await page.locator(`[data-action=edit-expense][data-id="${id}"]`).first().click();
+      await page.locator('#gx-form').waitFor({ state: 'visible' });
+      eq(await page.evaluate(() => gx('periodo')), '2026-11', 'el período se ve al editar');
+      await page.locator('#gx-monto').fill('61950');
+      await page.locator('#gx-form button[type=submit]').click();
+      await page.locator('#gx-form').waitFor({ state: 'detached' });
+      await settle(page);
+      eq(await page.evaluate(i => { const e = window.__garage.state.expenses.find(x => x.id === i); return [e.recurrenteId, e.periodo, e.cubre, e.clase, e.variacionPct]; }, id),
+        ['seguro', '2026-11', 1, 'cuota', 5], 'editar conserva el vínculo');
+      eq(errors, [], 'errores de consola');
+      await ctx.close();
+    });
+
+    await test('T2.3 no duplica el período (avisa y pide confirmar; un ajuste en el mismo mes no avisa)', async () => {
+      const { ctx, page, errors } = await openDemo(browser, base);
+      await seedRec(page, SEG(), [recPago('p10', 'seguro', '2026-10', 59000), recPago('p11', 'seguro', '2026-11', 59000)]);
+      await settle(page);
+      await page.evaluate(() => window.__garage.openAlertExpense('seguro'));
+      eq(await page.evaluate(() => gx('periodo')), '2026-12', 'propone el primer período sin pagar');
+      assert(await page.locator('#gx-dup').isHidden(), 'avisa duplicado sin motivo');
+      await page.locator('#gx-periodo').fill('2026-11');
+      assert(await page.locator('#gx-dup').isVisible(), 'no avisa que noviembre ya está pagado');
+      const submit = page.locator('#gx-form button[type=submit]');
+      await submit.click();
+      await settle(page);
+      eq([await page.evaluate(() => window.__garage.state.expenses.length), await submit.textContent(), await page.locator('#gx-form').count()], [2, 'Guardar igual', 1], 'el primer intento no guarda');
+      // Un ajuste (diferencia de póliza) en un mes pagado no es duplicado.
+      await page.locator('#gx-form details summary').click();
+      await page.locator('#gx-clase').selectOption('ajuste');
+      assert(await page.locator('#gx-dup').isHidden(), 'un ajuste no debería avisar duplicado');
+      eq(await submit.textContent(), 'Registrar pago', 'cambiar la clase reinicia la confirmación');
+      await page.locator('#gx-clase').selectOption('cuota');
+      await submit.click(); await settle(page);
+      await submit.click();                       // confirma "Guardar igual"
+      await page.locator('#gx-form').waitFor({ state: 'detached' });
+      await settle(page);
+      eq(await page.evaluate(() => window.__garage.state.expenses.filter(e => e.periodo === '2026-11').length), 2, 'confirmado, se guarda');
+      // Dos cuotas que pisan un mes pagado también avisan (oct pagado; sep + oct).
+      await page.evaluate(() => window.__garage.openAlertExpense('seguro'));
+      await page.locator('#gx-periodo').fill('2026-09');
+      await page.locator('#gx-form details summary').click();
+      await page.locator('#gx-cubre').selectOption('2');
+      assert(await page.locator('#gx-dup').isVisible(), 'no avisa la superposición de dos cuotas');
+      eq(errors, [], 'errores de consola');
+      await ctx.close();
+    });
+
+    await test('T2.4 estados pagado/pendiente/vencido con fecha simulada (reloj fijo en 05/11/2026)', async () => {
+      const { ctx, page, errors } = await openDemo(browser, base);
+      const pure = await page.evaluate(() => {
+        const g = window.__garage, r = { id: 'seguro', tipo: 'seguro', modo: 'mensual', diaVencimiento: 10, desde: '2026-10' };
+        const pago = (periodo, cubre = 1, clase = 'cuota') => ({ periodo, cubre, clase, e: {} });
+        const st = (pays, today, rr = r) => { const x = g.recStatus(rr, pays, today); return x && [x.st, x.periodo, x.iso, x.days]; };
+        return [
+          st([pago('2026-10')], '2026-11-05'), st([pago('2026-10')], '2026-11-12'), st([pago('2026-10'), pago('2026-11')], '2026-11-05'),
+          st([], '2026-11-05'), st([pago('2026-10'), pago('2026-11')], '2026-12-03'), st([pago('2026-10', 2)], '2026-11-05'),
+          st([pago('2026-10'), pago('2026-11', 1, 'ajuste')], '2026-11-05'), st([pago('2027-01')], '2027-02-01', { ...r, diaVencimiento: 31, desde: '2027-01' }),
+          st([], '2026-11-05', { modo: 'manual', proximo: '2026-11-15' }), st([], '2026-11-05', { modo: 'manual', proximo: '2027-01-15' }), st([], '2026-11-05', { modo: 'manual', proximo: null })];
+      });
+      eq(pure, [
+        ['yellow', '2026-11', '2026-11-10', 5], ['red', '2026-11', '2026-11-10', -2], ['green', '2026-12', '2026-12-10', 35],
+        ['red', '2026-10', '2026-10-10', -26], ['yellow', '2026-12', '2026-12-10', 7], ['green', '2026-12', '2026-12-10', 35],
+        ['yellow', '2026-11', '2026-11-10', 5], ['yellow', '2027-02', '2027-02-28', 27],
+        ['yellow', '2026-11', '2026-11-15', 10], ['green', '2027-01', '2027-01-15', 71], null], 'tabla de estados del ADR');
+      // Por la UI (computeAlerts → Vencimientos) con el reloj del harness.
+      await goTab(page, 'vencimientos');
+      for (const [dia, pagos, want] of [[3, ['2026-10'], ['red', 'VENCIDO']], [10, ['2026-10'], ['yellow', 'PENDIENTE']], [10, ['2026-10', '2026-11'], ['green', 'AL DÍA']]]) {
+        await page.evaluate(() => window.__garage.store.removeMany('expenses', window.__garage.state.expenses.map(e => e.id)));
+        await seedRec(page, SEG({ diaVencimiento: dia, montoEstimado: 60000 }), pagos.map((p, i) => recPago('x' + i, 'seguro', p, 61000)));
+        await settle(page);
+        const row = page.locator('#radar-list .alert[data-id="seguro"]');
+        eq([await row.getAttribute('data-s'), await row.locator('.badge').textContent()], want, `estado con día ${dia} y pagos ${pagos.join(',') || 'ninguno'}`);
+        assert(/\$\s?6[01]\.000/.test(await row.locator('.alert-sub').textContent()), 'la alerta no muestra el monto');
+      }
+      eq(await page.evaluate(() => window.__garage.DATE_ALERTS.map(a => a.id)), ['vtv', 'oblea', 'pruebaHidraulica'], 'seguro ya no está en DATE_ALERTS');
+      eq(errors, [], 'errores de consola');
+      await ctx.close();
+    });
+
+    await test('T2.5 ajuste acumulado calculado (cuotas, 2 cuotas juntas, ajuste aparte, inicio de póliza) y gráfico de 14 puntos sin desbordar', async () => {
+      const { ctx, page, errors } = await openDemo(browser, base);
+      await seedRec(page, SEG({ desde: '2026-01', inicioPoliza: '2026-03' }), [
+        recPago('h1', 'seguro', '2026-01', 50000), recPago('h2', 'seguro', '2026-02', 50000), recPago('h2b', 'seguro', '2026-02', 1333, { clase: 'ajuste' }),
+        recPago('h3', 'seguro', '2026-03', 110000, { cubre: 2 }), recPago('h5', 'seguro', '2026-05', 60000, { variacionPct: 9.1 })]);
+      await settle(page);
+      const h = await page.evaluate(() => { const g = window.__garage, x = g.recHistory(g.recurrentesList()[0]);
+        return { pts: x.pts.map(p => [p.periodo, p.monto]), acum: x.acum, poliza: x.acumPoliza, total: x.total }; });
+      eq(h, { pts: [['2026-01', 50000], ['2026-02', 50000], ['2026-03', 55000], ['2026-04', 55000], ['2026-05', 60000]], acum: 20, poliza: { desde: '2026-03', pct: 9.1 }, total: 271333 }, 'historial calculado');
+      await goTab(page, 'ajustes');
+      await page.locator('#rec-list [data-action=rec-history][data-id=seguro]').click();
+      await page.locator('#rh-list').waitFor({ state: 'visible' });
+      eq([await page.locator('#rh-acum').textContent(), await page.locator('#rh-chart circle').count(), await page.locator('#rh-list .rh-item').count()], ['+20,0 %', 5, 5], 'modal de historial');
+      eq(await page.locator('#rh-list .rh-item').evaluateAll(els => els.map(e => e.dataset.periodo)), ['2026-05', '2026-03', '2026-02', '2026-02', '2026-01'], 'lista ordenada por período');
+      eq(await page.locator('#rh-list .rh-var').allTextContents(), ['+9,1 %', '+10,0 %', '0,0 %'], 'variación entre pagos');
+      // 14 meses de pagos: el gráfico entra en el ancho del iPhone (390 px) sin zoom ni scroll horizontal.
+      await page.locator('[data-modal-close]').first().click();
+      await page.evaluate(() => window.__garage.store.removeMany('expenses', window.__garage.state.expenses.map(e => e.id)));
+      const many = Array.from({ length: 14 }, (_, i) => { const d = new Date(Date.UTC(2025, 8 + i, 1)); return recPago('m' + i, 'seguro', d.toISOString().slice(0, 7), 40000 + i * 1500); });
+      await seedRec(page, SEG({ desde: '2025-09' }), many);
+      await settle(page);
+      await page.evaluate(() => window.__garage.openRecHistory('seguro'));
+      await page.locator('#rh-chart').waitFor({ state: 'visible' });
+      const box = await page.evaluate(() => { const c = document.querySelector('#rh-chart').getBoundingClientRect(), sh = document.querySelector('.sheet').getBoundingClientRect();
+        return { pts: document.querySelectorAll('#rh-chart circle').length, fits: c.left >= sh.left && c.right <= sh.right + 0.5, overflow: document.documentElement.scrollWidth > window.innerWidth, w: Math.round(c.width) }; });
+      eq({ ...box, w: box.w >= 300 }, { pts: 14, fits: true, overflow: false, w: true }, 'gráfico legible en 390 px');
       eq(errors, [], 'errores de consola');
       await ctx.close();
     });
@@ -514,10 +735,14 @@ async function main() {
       const r = await page.evaluate(() => {
         const p = window.__garage.buildJsonPlan(JSON.stringify({ app: 'garage-radar', version: 1, settings: {}, refuels: [], expenses: [
           { id: 'a', fecha: '2026-10-10T10:00:00', odometro: null, categoria: 'TRAMITES', tipo: 'Seguro', monto: 1, vencimientoId: 'seguro' },
-          { id: 'b', fecha: '2026-10-10T10:00:00', odometro: null, categoria: 'TRAMITES', tipo: 'Seguro', monto: 1, vencimientoId: '<img>' }] }));
-        return p.expenses.map(e => e.vencimientoId ?? null);
+          { id: 'b', fecha: '2026-10-10T10:00:00', odometro: null, categoria: 'TRAMITES', tipo: 'Seguro', monto: 1, vencimientoId: '<img>' },
+          { id: 'c', fecha: '2026-10-10T10:00:00', odometro: null, categoria: 'TRAMITES', tipo: 'Seguro', monto: 1, recurrenteId: 'seguro', periodo: '2026-10', cubre: 2, clase: 'ajuste', variacionPct: 3.5 },
+          { id: 'd', fecha: '2026-10-10T10:00:00', odometro: null, categoria: 'TRAMITES', tipo: 'Seguro', monto: 1, recurrenteId: '<x>', periodo: 'mal', cubre: 99, clase: 'x' },
+          { id: 'e', fecha: '2026-10-10T10:00:00', odometro: null, categoria: 'TRAMITES', tipo: 'Seguro', monto: 1, recurrenteId: 'patente', periodo: '2026-13', cubre: 99, clase: 'x', variacionPct: 'NaN' }] }));
+        return p.expenses.map(e => [e.vencimientoId ?? null, e.recurrenteId ?? null, e.periodo ?? null, e.cubre ?? null, e.clase ?? null, e.variacionPct ?? null]);
       });
-      eq(r, ['seguro', null], 'vencimientoId importado (y descartado si no existe la alerta)');
+      eq(r, [['seguro', null, null, null, null, null], [null, null, null, null, null, null], [null, 'seguro', '2026-10', 2, 'ajuste', 3.5], [null, null, null, null, null, null], [null, 'patente', null, 1, 'cuota', null]],
+        'vínculos importados (y descartados si no son válidos); el vencimientoId "seguro" de 15ff551 se conserva');
       eq(errors, [], 'errores de consola');
       await ctx.close();
     });

@@ -191,13 +191,14 @@
 ## T2.2: Alta y edición de recurrentes en Ajustes  [🔒]
 **Agente / Modelo:** Frontend Developer / Sonnet
 **Descripción:** En Ajustes agregar la sección "Pagos recurrentes": crear, editar y desactivar seguro y patente con los campos del ADR. Migrar la fecha `seguro` existente a un recurrente de tipo seguro (idempotente). Agregar el store para `recurrentes` y la suscripción correspondiente.
+> **Hecho (05/11):** según el ADR §1, los recurrentes viven en `settings.recurrentes`. La suscripción a `settings` ya existe y el respaldo JSON los incluye, así que no hizo falta un store nuevo.
 **Criterios de aceptación:**
-- [ ] Se puede crear un seguro mensual con día de vencimiento y monto estimado.
-- [ ] Se puede crear la patente sin frecuencia fija. Cada pago guarda la fecha del próximo vencimiento, prellenada a +2 meses y editable.
-- [ ] La fecha `seguro` previa se migra una sola vez y no queda duplicada en `DATE_ALERTS`.
-- [ ] Desactivar un recurrente lo saca de las alertas sin borrar el historial.
+- [x] Se puede crear un seguro mensual con día de vencimiento y monto estimado.
+- [x] Se puede crear la patente sin frecuencia fija. Cada pago guarda la fecha del próximo vencimiento, prellenada a +2 meses y editable.
+- [x] La fecha `seguro` previa se migra una sola vez y no queda duplicada en `DATE_ALERTS`.
+- [x] Desactivar un recurrente lo saca de las alertas sin borrar el historial.
 **Verificación:**
-- [ ] `node tests/smoke.mjs` (casos: "crear recurrente", "migración seguro idempotente")
+- [x] `node tests/smoke.mjs` (casos: "crear recurrente", "migración seguro idempotente")
 - [ ] Revisión manual: en iPhone, cargar el seguro real en menos de un minuto.
 **Dependencias:** T2.1
 **Archivos probables:** `index.html`, `tests/smoke.mjs`
@@ -208,12 +209,12 @@
 **Agente / Modelo:** Frontend Developer / Sonnet
 **Descripción:** Botón "Registrar pago" en la alerta del recurrente que abre un modal con el monto precargado con el último pago, la fecha de hoy y el período; al confirmar crea un gasto TRAMITES con `recurrenteId` y `periodo`. Muestra la variación % respecto del pago anterior (ej. "+8,5 %"). Reutilizar `openModal` y el alta de gastos existente.
 **Criterios de aceptación:**
-- [ ] ≤3 toques, monto precargado con el último pago, muestra % de variación.
-- [ ] El pago crea un gasto TRAMITES con `recurrenteId` y `periodo` correctos.
-- [ ] Si ya hay un pago para ese período, avisa antes de duplicar.
-- [ ] Pagar adelanta el próximo vencimiento del recurrente.
+- [x] ≤3 toques, monto precargado con el último pago, muestra % de variación.
+- [x] El pago crea un gasto TRAMITES con `recurrenteId` y `periodo` correctos.
+- [x] Si ya hay un pago para ese período, avisa antes de duplicar.
+- [x] Pagar adelanta el próximo vencimiento del recurrente.
 **Verificación:**
-- [ ] `node tests/smoke.mjs` (casos: "registrar pago precarga último monto", "variación % correcta", "no duplica el período")
+- [x] `node tests/smoke.mjs` (casos: "registrar pago precarga último monto", "variación % correcta", "no duplica el período")
 - [ ] Revisión manual: en iPhone, contar los toques desde Resumen hasta guardado (máx. 3).
 **Dependencias:** T2.2
 **Archivos probables:** `index.html`, `tests/smoke.mjs`
@@ -223,11 +224,11 @@
 **Agente / Modelo:** Frontend Developer / Sonnet
 **Descripción:** Integrar los recurrentes a `computeAlerts` (:850) reemplazando la entrada `seguro` de `DATE_ALERTS` (:491). Cada recurrente activo produce una alerta con estado pagado/pendiente/vencido según el ADR, visible en Vencimientos y Resumen. Adaptar `alertRowHTML` (:1133) para mostrar monto estimado y días.
 **Criterios de aceptación:**
-- [ ] Un recurrente sin pago del período vigente aparece como pendiente y pasa a vencido tras el día de vencimiento.
-- [ ] Un recurrente pagado aparece como al día y avisa el siguiente período.
-- [ ] `seguro` ya no está en `DATE_ALERTS`.
+- [x] Un recurrente sin pago del período vigente aparece como pendiente y pasa a vencido tras el día de vencimiento.
+- [x] Un recurrente pagado aparece como al día y avisa el siguiente período.
+- [x] `seguro` ya no está en `DATE_ALERTS`.
 **Verificación:**
-- [ ] `node tests/smoke.mjs` (caso: "estados pagado/pendiente/vencido con fecha simulada")
+- [x] `node tests/smoke.mjs` (caso: "estados pagado/pendiente/vencido con fecha simulada")
 - [ ] Revisión manual: en iPhone, la alerta del seguro se lee con monto y días de forma clara.
 **Dependencias:** T2.3
 **Archivos probables:** `index.html` (:491, :850, :1133)
@@ -237,18 +238,18 @@
 **Agente / Modelo:** Frontend Developer / Sonnet
 **Descripción:** Pantalla o modal con la lista de pagos del recurrente, gráfico simple de evolución del monto (SVG propio, sin librerías) y el ajuste acumulado desde el primer pago. Accesible desde la alerta y desde Ajustes.
 **Criterios de aceptación:**
-- [ ] Lista de pagos ordenada por período, con monto y variación % entre pagos.
-- [ ] Gráfico de evolución con al menos 12 puntos legible en iPhone.
-- [ ] Muestra el ajuste acumulado (primer pago vs. último).
+- [x] Lista de pagos ordenada por período, con monto y variación % entre pagos.
+- [x] Gráfico de evolución con al menos 12 puntos legible en iPhone.
+- [x] Muestra el ajuste acumulado (primer pago vs. último).
 **Verificación:**
-- [ ] `node tests/smoke.mjs` (caso: "ajuste acumulado calculado")
+- [x] `node tests/smoke.mjs` (caso: "ajuste acumulado calculado")
 - [ ] Revisión manual: en iPhone, el gráfico no se corta ni requiere zoom.
 **Dependencias:** T2.3
 **Archivos probables:** `index.html`
 **Tamaño:** M
 
 ## Checkpoint S2
-- [ ] `node tests/smoke.mjs` en verde
+- [x] `node tests/smoke.mjs` en verde (26/26)
 - [ ] code-reviewer (Opus) sin hallazgos altos
 - [ ] Respaldo JSON exportado por Bryan antes de la migración del seguro (T2.2)
 - [ ] Bryan revisa en iPhone: alta del seguro, registrar un pago en ≤3 toques, historial
