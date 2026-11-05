@@ -13,7 +13,7 @@
 **Descripción:** Guía paso a paso para que Bryan exporte el respaldo JSON de la app en producción (Ajustes, exportar) antes de tocar nada. Es manual: el agente redacta los pasos (iPhone y escritorio) y le pide a Bryan que guarde el archivo fuera de la carpeta del proyecto, con la fecha en el nombre. Hoy el archivo se llama `autolog-backup-AAAA-MM-DD.json` (:1095).
 **Criterios de aceptación:**
 - [ ] La guía tiene menos de 8 pasos, en voseo, sin jerga.
-- [ ] Bryan confirma en el chat que el archivo existe y no está vacío.
+- [x] Bryan confirma en el chat que el archivo existe y no está vacío. (05/11)
 **Verificación:**
 - [ ] `node tests/smoke.mjs` (no aplica todavía; se agrega en T0.1)
 - [ ] Revisión manual: Bryan abre el JSON y ve sus gastos y sus fechas de VTV/oblea/seguro.
@@ -53,9 +53,9 @@
 ## Checkpoint S0
 - [x] `node tests/smoke.mjs` en verde
 - [x] code-reviewer (Opus) sin hallazgos altos (1 medio en .gitignore, corregido)
-- [ ] Respaldo JSON de producción guardado por Bryan (T0.0)
+- [x] Respaldo JSON de producción guardado por Bryan (T0.0)
 - [ ] Bryan confirma que la app sigue igual en iPhone
-- [ ] Push a GitHub Pages + forzar recarga por caché del service worker
+- [x] Push a GitHub Pages + forzar recarga por caché del service worker
 
 ---
 
@@ -71,7 +71,7 @@
 - [x] Respeta la decisión de Bryan (05/11): GNC queda solo con el ítem existente "Equipo de GNC" más la oblea y la prueba hidráulica de `DATE_ALERTS`. No se agregan regulador, filtro de gas ni válvulas.
 **Verificación:**
 - [x] `node tests/smoke.mjs` (no cambia; el ADR no toca código)
-- [ ] Revisión manual: Bryan lee el resumen de decisiones (máx. una página).
+- [x] Revisión manual: Bryan lee el resumen de decisiones (máx. una página).
 **Dependencias:** T0.1
 **Archivos probables:** `tasks/adr-catalogo.md`
 **Tamaño:** S
@@ -165,10 +165,10 @@
 ## Checkpoint S1
 - [x] `node tests/smoke.mjs` en verde (17/17)
 - [x] code-reviewer (Opus) sin hallazgos altos (5 medios: M1–M3 corregidos, M4 y parte de M5 quedan como seguimiento)
-- [ ] Respaldo JSON exportado por Bryan antes de la migración (T1.2) y reconfirmado después
+- [x] Respaldo JSON exportado por Bryan antes de la migración (T1.2) (confirmado 05/11; reconfirmar después de abrir la versión nueva)
 - [ ] Bryan revisa en iPhone: 25 o más ítems, onboarding, Resumen
 - [x] Correa de distribución confirmada: 50.000 km (05/11). T1.2 cambia el intervalo de `ultimoDistribucionKm` de 60.000 a 50.000
-- [ ] Push a GitHub Pages + forzar recarga por caché del service worker
+- [x] Push a GitHub Pages + forzar recarga por caché del service worker
 
 ---
 
