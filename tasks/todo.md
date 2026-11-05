@@ -163,8 +163,8 @@
 **Tamaño:** S
 
 ## Checkpoint S1
-- [ ] `node tests/smoke.mjs` en verde
-- [ ] code-reviewer (Opus) sin hallazgos altos
+- [x] `node tests/smoke.mjs` en verde (17/17)
+- [x] code-reviewer (Opus) sin hallazgos altos (5 medios: M1–M3 corregidos, M4 y parte de M5 quedan como seguimiento)
 - [ ] Respaldo JSON exportado por Bryan antes de la migración (T1.2) y reconfirmado después
 - [ ] Bryan revisa en iPhone: 25 o más ítems, onboarding, Resumen
 - [x] Correa de distribución confirmada: 50.000 km (05/11). T1.2 cambia el intervalo de `ultimoDistribucionKm` de 60.000 a 50.000

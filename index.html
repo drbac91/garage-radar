@@ -916,10 +916,11 @@ function derive() {
   return { kmNow, kmMin, span, segs, segById, eff, mix, fuelTotal, otherTotal, cpk, catTotals, months };
 }
 
-// Km de referencia para los contadores: el mayor entre el odómetro registrado y los km base cargados
-// (un ítem configurado en el onboarding no queda "sin configurar" aunque todavía no haya cargas).
+// Km de referencia para los contadores: el odómetro registrado; si todavía no hay cargas ni gastos con odómetro,
+// el mayor km base cargado (así un ítem configurado en el onboarding no queda "sin configurar").
 function kmRef(D, s = state.settings || {}) {
-  const all = [D && D.kmNow, ...SERVICE_ITEMS.map(a => s[a.key])].filter(n => Number.isFinite(n) && n > 0);
+  if (D && Number.isFinite(D.kmNow)) return D.kmNow;   // un km base mal tipeado no arrastra a todo el catálogo
+  const all = SERVICE_ITEMS.map(a => s[a.key]).filter(n => Number.isFinite(n) && n > 0);
   return all.length ? Math.max(...all) : null;
 }
 const ALERT_RANK = { red: 0, yellow: 1, green: 2, none: 3 };
@@ -941,7 +942,7 @@ function computeAlerts(D) {
   for (const a of SERVICE_ITEMS) {
     if (off[a.id]) continue;
     // Estado por km y por tiempo (lo que ocurra primero); se muestra el peor de los dos.
-    const parts = [], base = s[a.key], last = (revs[a.id] || [])[0] || null;
+    const parts = [], base = s[a.key], last = (Array.isArray(revs[a.id]) ? revs[a.id] : []).find(r => r && isValidDate(r.fecha)) || null;
     if (a.km && Number.isFinite(base) && km !== null) {
       const rem = base + a.km - km;
       parts.push({ by: 'km', rem, target: base + a.km, st: rem <= 0 ? 'red' : rem <= a.warnKm ? 'yellow' : 'green' });
@@ -1158,6 +1159,7 @@ async function executePlan(plan) {
       if (!cur.vehiculo || !cur.vehiculo.nombre) patch.vehiculo = plan.settings.vehiculo;
     } else Object.assign(patch, plan.settings);
   }
+  Object.assign(patch, migrateSettings({ ...state.settings, ...patch }));   // antes de serviceCounters: si no, un gasto viejo bloquearía la migración
   Object.assign(patch, serviceCounters([...state.expenses, ...plan.newExpenses], { ...state.settings, ...patch }));
   if (Object.keys(patch).length) await store.saveSettings(patch);
   return { inserted: plan.newRefuels.length + plan.newExpenses.length, dupes: plan.dupes, rejected: plan.rejected.length };
@@ -1227,7 +1229,7 @@ function alertRowHTML(a) {
     }
   }
   if (a.pending) { sub = 'Sin dato: revisalo y cargá la última vez'; big = '!'; badge = 'REVISAR'; }
-  if (a.lastReview) sub += ` · revisado el ${fmtDate(a.lastReview.fecha)}`;
+  if (a.lastReview) sub += ` · revisado el ${esc(fmtDate(a.lastReview.fecha))}`;
   const acts = [];
   if (a.st === 'none' || a.pending) acts.push(`<button class="btn btn-ghost btn-sm" type="button" data-action="onboard-one" data-id="${esc(a.id)}">${a.kind === 'date' ? 'Cargar fecha' : 'Cargar última vez'}</button>`);
   if (a.tipo === 'inspeccion') acts.push(`<button class="btn btn-ghost btn-sm" type="button" data-action="mark-reviewed" data-id="${esc(a.id)}">${icon('check', 16)}Marcar revisado</button>`);
@@ -1278,9 +1280,10 @@ function renderResumen(D) {
       <div class="tile"><div class="tile-label">Otros gastos</div><div class="tile-val num">${money(D.otherTotal)}</div><div class="tile-sub">${state.expenses.length} ítems</div></div>
     </div>`;
   const A = computeAlerts(D), hot = A.filter(a => a.st === 'red' || a.st === 'yellow'), ok = A.filter(a => a.st === 'green');
+  queueMicrotask(() => { const d = $('#next-ok'); if (d) d.addEventListener('toggle', () => { state.ui.okOpen = d.open; }); });
   next.innerHTML = onboardCTA(A)
     + (hot.length ? hot.map(alertRowHTML).join('') : '<div class="empty">Nada vencido ni próximo a vencer.</div>')
-    + (ok.length ? `<details class="more-info" id="next-ok"><summary>${nf(ok.length)} al día</summary><div class="alerts" style="margin-top:10px">${ok.map(alertRowHTML).join('')}</div></details>` : '');
+    + (ok.length ? `<details class="more-info" id="next-ok" ${state.ui.okOpen ? 'open' : ''}><summary>${nf(ok.length)} al día</summary><div class="alerts" style="margin-top:10px">${ok.map(alertRowHTML).join('')}</div></details>` : '');
 }
 
 function renderPassport(D) {
@@ -1792,26 +1795,33 @@ function openSettingsModal() {
     ev.preventDefault();
     const err = m => { const p = $('#st-error', el); p.textContent = m; p.hidden = !m; };
     const patch = { vehiculo: {}, vencimientos: {} };
+    const changed = id => { const i = $('#' + id, el); return i.value !== i.defaultValue; };
+    const kNow = derive().kmNow;
     patch.vehiculo.nombre = $('#st-nombre', el).value.trim(); patch.vehiculo.modelo = $('#st-modelo', el).value.trim();
     const anio = parseKm($('#st-anio', el).value), tanque = parseNum($('#st-tanque', el).value);
     patch.vehiculo.anio = Number.isFinite(anio) ? anio : null; patch.vehiculo.tanque = Number.isFinite(tanque) ? tanque : null;
     for (const a of DATE_ALERTS) {
       const val = $('#st-' + a.key, el).value;
       if (val && !isValidDate(val)) return err(`Fecha inválida en ${a.label}.`);
-      patch.vencimientos[a.key] = val || '';
+      if (changed('st-' + a.key)) patch.vencimientos[a.key] = val || '';
     }
+    if (!Object.keys(patch.vencimientos).length) delete patch.vencimientos;
     for (const a of SERVICE_ITEMS) {
       if (off[a.id]) continue;   // oculto en el formulario: no se toca lo guardado
-      if (a.km) {
+      if (a.km && changed('st-' + a.key)) {
         const raw = $('#st-' + a.key, el).value.trim(), n = parseKm(raw);
         if (raw && !(n >= 0)) return err(`Odómetro inválido en ${a.label}.`);
+        if (raw && Number.isFinite(kNow) && n > kNow + 1000) return err(`${a.label}: el km no puede superar el odómetro actual (${nf(kNow)} km).`);
         patch[a.key] = raw ? n : null;
       }
-      const f = $('#st-' + a.fkey, el).value;
-      if (f && !isValidDate(f)) return err(`Fecha inválida en ${a.label}.`);
-      patch[a.fkey] = f || null;
+      if (changed('st-' + a.fkey)) {
+        const f = $('#st-' + a.fkey, el).value;
+        if (f && !isValidDate(f)) return err(`Fecha inválida en ${a.label}.`);
+        patch[a.fkey] = f || null;
+      }
     }
-    patch.noAplica = Object.fromEntries($$('[data-noaplica]', el).map(c => [c.dataset.noaplica, c.checked]));
+    const na = $$('[data-noaplica]', el).filter(c => c.checked !== c.defaultChecked);
+    if (na.length) patch.noAplica = Object.fromEntries(na.map(c => [c.dataset.noaplica, c.checked]));
     await store.saveSettings(patch); closeModal(true); toast('Configuración guardada.', 'ok');
   });
 }
@@ -1850,6 +1860,8 @@ function openOnboarding(onlyId = null) {
       const fecha = $('#ob-fecha', el).value, kmRaw = a.km && !isDate ? $('#ob-km', el).value.trim() : '', km = kmRaw ? parseKm(kmRaw) : null;
       if (fecha && !isValidDate(fecha)) return err('Ingresá una fecha válida.');
       if (kmRaw && !(km > 0)) return err('El km debe ser un número mayor a 0.');
+      const kNow = derive().kmNow;
+      if (km && Number.isFinite(kNow) && km > kNow + 1000) return err(`El km no puede superar el odómetro actual (${nf(kNow)} km).`);
       if (isDate) return fecha ? answer({ vencimientos: { [a.key]: fecha } }) : err('Ingresá la fecha o elegí "No sé".');
       if (!km && !(fecha && a.meses)) return err(a.km && !a.meses ? 'Ingresá el km de la última vez o elegí "No sé".' : 'Ingresá la fecha o el km de la última vez, o elegí "No sé".');
       answer({ ...(km ? { [a.key]: km } : {}), ...(fecha ? { [a.fkey]: fecha } : {}), pendientes: { [a.id]: false } });
@@ -1865,7 +1877,7 @@ async function markReviewed(id) {
   const a = SERVICE_ITEMS.find(x => x.id === id);
   if (!a || a.tipo !== 'inspeccion') return;
   const s = state.settings || {}, km = kmRef(derive(), s), fecha = todayISO();
-  const prev = ((s.revisiones || {})[id] || []).filter(r => r && r.fecha);
+  const raw = (s.revisiones || {})[id], prev = (Array.isArray(raw) ? raw : []).filter(r => r && isValidDate(r.fecha));
   const patch = { [a.fkey]: fecha, revisiones: { [id]: [{ fecha, km: km || null }, ...prev].slice(0, 10) }, pendientes: { [id]: false } };
   if (a.km && km && km >= (s[a.key] || 0)) patch[a.key] = km;
   await store.saveSettings(patch);

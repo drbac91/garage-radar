@@ -64,7 +64,7 @@ La correa poly-V se modela como **inspección cada 25.000 km o 48 meses**, y el 
 - `revisiones: { [id]: [{ fecha, km }] }`: historial liviano de "Marcar revisado", el más reciente primero, con un tope de 10 por ítem.
 - Para los vencimientos por fecha (`vtv`, `oblea`, `pruebaHidraulica`, `seguro`), el `id` es la misma `key`. "No sé" y "no aplica" funcionan igual.
 
-**Km de referencia:** `computeAlerts` usa como km actual el mayor entre el odómetro registrado y los km base cargados. Así, un ítem por km configurado en el onboarding no queda "sin configurar" en una cuenta sin cargas.
+**Km de referencia:** `computeAlerts` usa el odómetro registrado. Solo si todavía no hay ningún odómetro, usa el mayor km base cargado, para que un ítem por km configurado en el onboarding no quede "sin configurar". Un km base no puede superar el odómetro actual por más de 1.000 km (onboarding y Configurar lo rechazan).
 
 ## 3. Contadores
 
@@ -80,7 +80,7 @@ La correa poly-V se modela como **inspección cada 25.000 km o 48 meses**, y el 
 3. Agrega `migraciones: { neumaticos3: true }`. Si no hay `ultimoNeumaticosKm` ni `ultimoNeumaticosFecha`, no hace nada **ni pone la marca**, así que un respaldo viejo importado en una cuenta nueva también se migra.
 4. **Nunca** borra ni modifica `ultimoNeumaticosKm/Fecha`.
 
-Corre en la suscripción de `settings`. En Firestore se saltea si el snapshot viene de la caché (`metadata.fromCache`), para que una caché vieja no pise valores ya migrados desde otro dispositivo. Correrla dos veces da `{}` la segunda vez, y la smoke lo verifica. **Caso borde:** si después de migrar se importa un respaldo viejo con `ultimoNeumaticosKm`, no se vuelve a copiar (la marca ya está). Se puede usar "Calcular desde el historial" o cargar el dato a mano.
+Corre en la suscripción de `settings` y también dentro de `executePlan`, antes de `serviceCounters` (si no, un gasto viejo de rotación ocuparía el destino y bloquearía la copia). En Firestore se saltea si el snapshot viene de la caché (`metadata.fromCache`), para que una caché vieja no pise valores ya migrados desde otro dispositivo. Correrla dos veces da `{}` la segunda vez, y la smoke lo verifica. **Caso borde:** si después de migrar se importa un respaldo viejo con `ultimoNeumaticosKm`, no se vuelve a copiar (la marca ya está). Se puede usar "Calcular desde el historial" o cargar el dato a mano.
 
 ## 5. Modularización: **no** (por ahora)
 

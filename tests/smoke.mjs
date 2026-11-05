@@ -413,6 +413,36 @@ async function main() {
       await ctx.close();
     });
 
+    await test('Configurar: guardar sin cambios no toca los ajustes y "no aplica" se tilda desde la UI', async () => {
+      const { ctx, page, errors } = await openDemo(browser, base);
+      await goTab(page, 'vencimientos');
+      await saveSettings(page, { vehiculo: { nombre: 'Auto', modelo: 'Voyage', anio: 2015, tanque: 50 }, vencimientos: { vtv: '2026-11-20' },
+        ultimoAceiteKm: 209100, ultimoAceiteFecha: '2026-02-15', ultimoNeumaticosKm: 205000, ultimoNeumaticosFecha: '2025-12-01', noAplica: { escape: true } });
+      await page.waitForFunction(() => window.__garage.state.settings.migraciones?.neumaticos3);
+      const before = await page.evaluate(() => JSON.stringify(window.__garage.state.settings));
+      // Simula la carrera de M1: el formulario se abre y después llega un valor nuevo (otro dispositivo o la migración).
+      await page.locator('[data-view=vencimientos] [data-action=open-settings]').click();
+      await page.locator('#st-form').waitFor({ state: 'visible' });
+      await saveSettings(page, { ultimoBateriaFecha: '2026-10-10' });
+      await settle(page);
+      await page.locator('#st-form button[type=submit]').click();
+      await page.locator('#st-form').waitFor({ state: 'detached' });
+      await settle(page);
+      const after = await page.evaluate(() => window.__garage.state.settings);
+      eq(JSON.stringify({ ...after, ultimoBateriaFecha: undefined }), JSON.stringify({ ...JSON.parse(before), ultimoBateriaFecha: undefined }), 'ajustes tras guardar sin cambios');
+      eq(after.ultimoBateriaFecha, '2026-10-10', 'un valor llegado con el formulario abierto no se pisa con null');
+      await page.locator('[data-view=vencimientos] [data-action=open-settings]').click();
+      await page.locator('#st-form details.more-info summary').click();
+      await page.locator('[data-noaplica=kitSeguridad]').check();
+      await page.locator('#st-form button[type=submit]').click();
+      await page.locator('#st-form').waitFor({ state: 'detached' });
+      await settle(page);
+      eq(await page.locator('#radar-list .alert[data-id="kitSeguridad"]').count(), 0, '"no aplica" tildado en Configurar oculta el ítem');
+      eq(await page.evaluate(() => window.__garage.state.settings.noAplica), { escape: true, kitSeguridad: true }, 'mapa noAplica');
+      eq(errors, [], 'errores de consola');
+      await ctx.close();
+    });
+
     await test('window.__garage no existe fuera de ?demo=1', async () => {
       const ctx = await browser.newContext();
       const page = await ctx.newPage();
