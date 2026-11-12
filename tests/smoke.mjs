@@ -786,6 +786,27 @@ async function main() {
       await ctx.close();
     });
 
+    await test('contadores desde el historial al abrir: lee tipo y descripción, sin falsos positivos ni retrocesos', async () => {
+      const { ctx, page, errors } = await openDemo(browser, base);
+      const r = await page.evaluate(async () => {
+        const g = window.__garage, S = () => g.state.settings;
+        await g.store.saveSettings({ ultimoAceiteKm: 215000, ultimoAceiteFecha: '2026-06-01' });   // valor más nuevo que el historial
+        await g.store.writeMany('expenses', [
+          { id: 'h1', fecha: '2026-03-10T10:00:00', odometro: 210000, categoria: 'REPARACION', tipo: 'Autopartes', descripcion: 'Pastillas de freno delanteras', monto: 30000, local: '', grupoId: null, origen: 'drivvo' },
+          { id: 'h2', fecha: '2026-04-02T10:00:00', odometro: 211000, categoria: 'PREVENTIVO', tipo: 'Cambio de aceite', descripcion: '', monto: 60000, local: '', grupoId: null, origen: 'drivvo' },
+          { id: 'h3', fecha: '2026-05-05T10:00:00', odometro: 212000, categoria: 'OTROS', tipo: 'Lavadero', descripcion: 'Lavado completo', monto: 8000, local: '', grupoId: null, origen: 'manual' },
+          { id: 'h4', fecha: '2026-05-06T10:00:00', odometro: 212100, categoria: 'REPARACION', tipo: 'Filtro de aceite', descripcion: '', monto: 9000, local: '', grupoId: null, origen: 'manual' }
+        ]);
+        for (let i = 0; i < 40 && !S().ultimoPastillasKm; i++) await new Promise(res => setTimeout(res, 25));
+        const s = S();
+        return { pastillas: [s.ultimoPastillasKm, s.ultimoPastillasFecha], aceite: [s.ultimoAceiteKm, s.ultimoAceiteFecha],
+          sinFalsos: !s.ultimoLucesFecha && !s.ultimoEscobillasFecha };
+      });
+      eq(r, { pastillas: [210000, '2026-03-10'], aceite: [215000, '2026-06-01'], sinFalsos: true }, 'contadores calculados al abrir');
+      eq(errors, [], 'errores de consola');
+      await ctx.close();
+    });
+
     await test('window.__garage no existe fuera de ?demo=1', async () => {
       const ctx = await browser.newContext();
       const page = await ctx.newPage();

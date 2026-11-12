@@ -582,7 +582,8 @@ const SERVICE_ITEMS = [
   const re = a.match.re, not = a.match.not;
   return { km: null, meses: null, warnKm: a.km ? defWarnKm(a.km) : null, warnDias: a.meses ? defWarnDias(a.meses) : null, ...a,
     key: `ultimo${stem}Km`, fkey: `ultimo${stem}Fecha`, sub: `Cada ${every}`, matchRule: a.match,
-    match: e => { const t = norm(e.tipo); return re.test(t) && !(not && not.test(t)); } };
+    // El tipo o la descripción (título y notas de Drivvo): las reparaciones suelen venir como "Autopartes" con el detalle en las notas.
+    match: e => [e.tipo, e.descripcion].some(v => { const t = norm(v); return t !== '' && re.test(t) && !(not && not.test(t)); }) };
 });
 // Migración: "Rotación y alineación" (ultimoNeumaticosKm/Fecha) se dividió en rotación, alineación y balanceo.
 // Pura e idempotente: copia solo a destinos vacíos, una sola vez (marca en `migraciones`) y no borra la clave vieja.
@@ -927,20 +928,29 @@ function createFirestoreStore(uid) {
 
 function startSession() {
   stopSession();
-  state.loaded = { refuels: false, expenses: false, settings: false };
+  state.loaded = { refuels: false, expenses: false, settings: false }; settingsFresh = false;
   state.refuels = []; state.expenses = []; state.settings = {};
   const onErr = e => { showGlobalError(friendlyError(e)); toast(friendlyError(e), 'err'); };
   ['refuels', 'expenses', 'settings'].forEach(n => {
     unsubs.push(store.subscribe(n, (data, fromCache) => {
       state[n] = data; state.loaded[n] = true; scheduleRender();
+      if (n === 'settings') settingsFresh = !fromCache;
       if (n === 'settings' && !fromCache) {   // una caché vieja no debe pisar lo que otro dispositivo ya migró
         const patch = migrateSettings(data);
         if (Object.keys(patch).length) store.saveSettings(patch);
+      }
+      // Contadores desde el historial al abrir: así los ítems nuevos del catálogo toman los gastos ya cargados.
+      // Seguro de repetir: serviceCounters solo avanza y devuelve {} cuando no hay nada nuevo. Solo con ajustes del
+      // servidor: comparar contra una caché vieja podría pisar un valor más nuevo cargado desde otro dispositivo.
+      if (settingsFresh && state.loaded.expenses) {
+        const cp = serviceCounters(state.expenses, state.settings || {});
+        if (Object.keys(cp).length) store.saveSettings(cp);
       }
     }, onErr));
   });
   scheduleRender();
 }
+let settingsFresh = false;
 function stopSession() { unsubs.forEach(u => { try { u(); } catch (e) { /* noop */ } }); unsubs = []; }
 
 /* ============================= 5. CÁLCULOS =============================== */
