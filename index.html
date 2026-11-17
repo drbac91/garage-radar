@@ -942,7 +942,7 @@ function startSession() {
       // Contadores desde el historial al abrir: así los ítems nuevos del catálogo toman los gastos ya cargados.
       // Seguro de repetir: serviceCounters solo avanza y devuelve {} cuando no hay nada nuevo. Solo con ajustes del
       // servidor: comparar contra una caché vieja podría pisar un valor más nuevo cargado desde otro dispositivo.
-      if (n === 'settings' && settingsFresh) refreshIpc();
+      if (n === 'settings' && settingsFresh) { refreshIpc(); flushOutbox(); }
       if (settingsFresh && state.loaded.expenses) {
         const cp = serviceCounters(state.expenses, state.settings || {});
         if (Object.keys(cp).length) store.saveSettings(cp);
@@ -971,6 +971,65 @@ async function refreshIpc(fetchFn = fetch) {
     if (Object.keys(ipc).length) await store.saveSettings({ ipc, ipcFecha: new Date().toISOString() });
   } catch (e) { /* sin red o API caída: se sigue con el último IPC guardado */ } finally { ipcBusy = false; }
 }
+/* ===================== ENVÍO A FINANZAS (F2) ===========================
+   Cada gasto/carga NUEVO con cuenta se cifra (AES-256-GCM, formato de Finanzas: tasks/etapa-garage-f0.md) y se manda al buzón.
+   La vinculación (dirección + código FG1.<clave>.<token>) y la cola viven en ESTE dispositivo (localStorage), no en Firestore.
+   shortcut: localStorage guarda la clave y el token en claro; lo peor que logra quien los robe es mandar eventos falsos,
+   nunca leer. Endurecer (IndexedDB con clave no extraíble + CSP) con el hardening de seguridad. */
+const FZ_LINK = 'gr_fz_link', FZ_OUT = 'gr_fz_outbox', FZ_BAD = 'gr_fz_rechazados';
+const lsGet = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch (e) { return d; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* ventana privada: no persiste */ } };
+const b64u = u => { let t = ''; for (const b of u) t += String.fromCharCode(b); return btoa(t).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, ''); };
+const deb64u = t => { if (!/^[A-Za-z0-9_-]*$/.test(t)) throw new Error('base64url inválido'); t = t.replaceAll('-', '+').replaceAll('_', '/'); return Uint8Array.from(atob(t + '='.repeat((4 - (t.length % 4)) % 4)), c => c.charCodeAt(0)); };
+async function cifrarSobre(k, tipo, claro, id, iv = crypto.getRandomValues(new Uint8Array(12))) {
+  const key = await crypto.subtle.importKey('raw', k, 'AES-GCM', false, ['encrypt']);
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: new TextEncoder().encode(`finanzas/v1|${tipo}|${id || ''}`) }, key, claro);
+  return { v: 1, tipo, ...(id ? { id } : {}), iv: b64u(iv), datos: b64u(new Uint8Array(ct)) };
+}
+function leerCodigoFG(texto) {
+  const m = /^FG1\.([A-Za-z0-9_-]{43})\.([A-Za-z0-9_-]{32,128})$/.exec(String(texto).trim());
+  return m ? { k: m[1], token: m[2] } : null;
+}
+const fzId = docId => 'gr-' + String(docId).replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 61).padEnd(5, 'x');
+// Evento `crea` (formato validado por finanzas/garage_evento.py). Devuelve null si no hay nada que mandar.
+function fzEvent(kind, d) {
+  const amount = kind === 'combustible' ? d.costoTotal : d.monto;
+  if (!d.cuenta || !(amount > 0)) return null;   // sin cuenta no se envía; un monto 0 no es un gasto
+  const base = { v: 1, origen: 'garage', evento: 'crea', id: fzId(d.id), tipo: kind, fecha: datePart(d.fecha), cuenta: d.cuenta, cuotas: d.cuotas || 1, monto: Number(amount).toFixed(2) };
+  if (kind === 'combustible') return { ...base, categoria: 'Combustible', descripcion: [d.combustible, d.estacion].filter(Boolean).join(' · '), odometro: String(d.odometro), litros: String(d.volumen), combustible: d.combustible };
+  return { ...base, categoria: (CATS[d.categoria] || CATS.OTROS).short, descripcion: [d.tipo, d.descripcion].filter(Boolean).join(' · ').slice(0, 200), ...(Number.isFinite(d.odometro) ? { odometro: String(d.odometro) } : {}) };
+}
+function fzQueue(ev) {
+  if (!ev) return;
+  lsSet(FZ_OUT, [...lsGet(FZ_OUT, []).filter(x => x.id !== ev.id), ev]);
+  flushOutbox();
+}
+const fzStatus = () => ({ link: lsGet(FZ_LINK, null), pend: lsGet(FZ_OUT, []).length, bad: lsGet(FZ_BAD, []) });
+let fzBusy = false, fzError = '';
+// Manda la cola en orden. Reintenta solo lo transitorio (sin red, 5xx, 401, 507); un rechazo definitivo (400/403/409/413)
+// sale de la cola y queda en «rechazados» con su motivo. El id del evento hace seguro reenviar.
+async function flushOutbox(fetchFn = fetch) {
+  const link = lsGet(FZ_LINK, null);
+  if (!link || fzBusy || (DEMO && fetchFn === fetch)) return;
+  fzBusy = true; fzError = '';
+  try {
+    for (let q = lsGet(FZ_OUT, []); q.length; q = lsGet(FZ_OUT, [])) {
+      const ev = q[0];
+      let r;
+      try {
+        const sobre = await cifrarSobre(deb64u(link.k), 'garage', new TextEncoder().encode(JSON.stringify(ev)), ev.id);
+        r = await fetchFn(link.url + '/api/buzon', { method: 'POST', headers: { Authorization: 'Bearer ' + link.token, 'Content-Type': 'application/json' }, body: JSON.stringify(sobre) });
+      } catch (e) { fzError = 'Sin conexión con Finanzas.'; break; }
+      if (r.ok) { lsSet(FZ_OUT, lsGet(FZ_OUT, []).slice(1)); continue; }
+      if ([400, 403, 409, 413].includes(r.status)) {
+        lsSet(FZ_OUT, lsGet(FZ_OUT, []).slice(1)); lsSet(FZ_BAD, [...lsGet(FZ_BAD, []), { id: ev.id, status: r.status, fecha: ev.fecha, monto: ev.monto }].slice(-50)); continue;
+      }
+      fzError = r.status === 401 ? 'Finanzas no reconoce el código de vinculación (¿se revocó?).' : r.status === 507 ? 'El buzón de Finanzas está lleno.' : `Finanzas respondió ${r.status}.`;
+      break;
+    }
+  } finally { fzBusy = false; }
+}
+
 // Factor para llevar pesos del mes `desde` a pesos del mes `hasta` (AAAA-MM): producto de (1 + IPC/100) de los meses
 // en (desde, hasta]. Un mes sin dato no ajusta (igual que Finanzas), así que el factor nunca se inventa.
 function ipcFactor(ipc, desde, hasta) {
@@ -1901,7 +1960,8 @@ async function submitRefuel(e, el) {
     ...(editing ? { id: editing.id } : {}), fecha: `${fecha}T${time}`, odometro: odo, combustible: f, grado: f === 'NAFTA' ? $('#fl-grado').value : null,
     volumen: vol, costoTotal: costo, precioUnitario: pu, lleno: state.ui.lleno, estacion: $('#fl-estacion').value.trim(), notas: editing?.notas || '', origen: editing?.origen || 'manual'
   };
-  await store.save('refuels', doc);
+  const rid = await store.save('refuels', doc);
+  if (!editing) fzQueue(fzEvent('combustible', { ...doc, id: rid }));   // editar un gasto ya enviado: F4
   state.ui.fuel = f;   // el listado de Cargas muestra el combustible recién cargado
   if (modal && modal.el === el) closeModal(true);
   toast(editing ? 'Carga actualizada.' : 'Carga registrada.', 'ok');
@@ -2049,13 +2109,15 @@ function openExpenseModal(existing, ctx = null) {
       recF = { recurrenteId: rec.id, periodo: c.periodo, cubre: c.cubre, clase: c.clase, ...(c.pct !== null ? { variacionPct: c.pct } : {}) };
     } else if (existing) recF = recFieldsOf(existing);   // vínculo a un recurrente que ya no existe: se conserva tal cual
     const time = existing && datePart(existing.fecha) === fecha ? (String(existing.fecha).slice(11) || '12:00:00') : nowTime();
-    await store.save('expenses', {
+    const xdoc = {
       ...(existing ? { id: existing.id } : {}), fecha: `${fecha}T${time}`, odometro: odo, categoria: cat, cuenta: pay.cuenta, cuotas: pay.cuotas,
       tipo: $('#gx-tipo', el).value.trim() || CATS[cat].short, descripcion: $('#gx-desc', el).value.trim(), monto, local: $('#gx-local', el).value.trim(),
       grupoId: existing?.grupoId || null, origen: existing?.origen || 'manual',
       ...((link || existing?.vencimientoId) ? { vencimientoId: link ? link.id : existing.vencimientoId } : {}),   // qué alerta originó el gasto
       ...recF
-    });
+    };
+    const eid = await store.save('expenses', xdoc);
+    if (!existing) fzQueue(fzEvent('gasto', { ...xdoc, id: eid }));   // editar un gasto ya enviado: F4
     const patch = {};
     if (next && link) patch.vencimientos = { [link.key]: next };
     if (next && rec && ctx) patch.recurrentes = { [rec.id]: { proximo: next } };   // patente: pagar adelanta el próximo vencimiento
@@ -2102,6 +2164,13 @@ function openSettingsModal() {
         <div class="field"><label for="st-anio">Año</label><input id="st-anio" inputmode="numeric" value="${Number.isFinite(v.anio) ? v.anio : ''}"></div>
         <div class="field"><label for="st-tanque">Tanque (L)</label><input id="st-tanque" inputmode="decimal" value="${Number.isFinite(v.tanque) ? String(v.tanque).replace('.', ',') : ''}"></div>
       </div>
+      <details class="more-info" id="st-fz"><summary>Conexión con Finanzas${(() => { const z = fzStatus(); return z.link ? ` · vinculada${z.pend ? ` · ${z.pend} sin enviar` : ''}${z.bad.length ? ` · ${z.bad.length} rechazados` : ''}` : ' · sin vincular'; })()}</summary>
+        <p class="help">En la Mac: <code>finanzas garage vincular</code>. Pegá acá la dirección del buzón y el código que imprime. Se guardan solo en este dispositivo.</p>
+        <div class="field"><label for="st-fz-url">Dirección del buzón (https://…)</label><input id="st-fz-url" inputmode="url" autocapitalize="off" value="${esc((fzStatus().link || {}).url || '')}"></div>
+        <div class="field"><label for="st-fz-code">Código de vinculación (FG1.…)</label><input id="st-fz-code" autocapitalize="off" placeholder="${fzStatus().link ? 'Vinculada: pegá otro para cambiarla' : 'FG1.…'}"></div>
+        <div class="grid-2"><button class="btn btn-ghost" type="button" id="st-fz-retry">Reintentar envío</button><button class="btn btn-ghost" type="button" id="st-fz-unlink">Desvincular</button></div>
+        <p class="help" id="st-fz-msg" role="status">${esc(fzError)}</p>
+      </details>
       <div class="field"><label for="st-cuentas">Cuentas de Finanzas (una por línea)</label><textarea id="st-cuentas" rows="4" maxlength="2000" placeholder="Mercado Pago&#10;Visa Galicia&#10;Efectivo">${esc(cuentasList(s).join('\n'))}</textarea>
         <span class="help" style="margin:0">Escribilas igual que en Finanzas: así se reconocen al enviar los gastos.</span></div>
       <div class="tile-label" style="margin-top:6px">Vencimientos (fecha)</div>
@@ -2127,9 +2196,19 @@ function openSettingsModal() {
     if (!n) return toast('No hay datos nuevos en el historial para completar.', 'ok');
     await store.saveSettings(patch); closeModal(true); toast(`Contadores actualizados desde el historial (${n} valores).`, 'ok');
   });
+  $('#st-fz-retry', el).addEventListener('click', async () => { await flushOutbox(); const z = fzStatus(); $('#st-fz-msg', el).textContent = fzError || (z.link ? `Pendientes: ${z.pend}.` : 'Todavía no está vinculada.'); });
+  $('#st-fz-unlink', el).addEventListener('click', () => { localStorage.removeItem(FZ_LINK); $('#st-fz-url', el).value = ''; $('#st-fz-msg', el).textContent = 'Desvinculada. Lo pendiente queda en la cola hasta que vincules de nuevo.'; });
   $('#st-form', el).addEventListener('submit', async ev => {
     ev.preventDefault();
     const err = m => { const p = $('#st-error', el); p.textContent = m; p.hidden = !m; };
+    const codeRaw = $('#st-fz-code', el).value.trim(), urlRaw = $('#st-fz-url', el).value.trim().replace(/\/+$/, '');
+    if (codeRaw || (urlRaw && urlRaw !== ((fzStatus().link || {}).url || ''))) {
+      const cur = fzStatus().link, code = codeRaw ? leerCodigoFG(codeRaw) : cur;
+      if (codeRaw && !code) return err('El código de vinculación no es válido (empieza con FG1.).');
+      if (!/^https:\/\/[^/\s]+$/.test(urlRaw)) return err('La dirección del buzón tiene que ser https://… sin ruta.');
+      if (!code) return err('Pegá el código de vinculación.');
+      lsSet(FZ_LINK, { url: urlRaw, k: code.k, token: code.token }); flushOutbox();
+    }
     const patch = { vehiculo: {}, vencimientos: {} };
     const changed = id => { const i = $('#' + id, el); return i.value !== i.defaultValue; };
     const kNow = derive().kmNow;
@@ -2438,7 +2517,7 @@ function bindEvents() {
   });
   $('#file-import').addEventListener('change', e => handleImportFile(e.target.files[0]));
   window.addEventListener('hashchange', route);
-  window.addEventListener('online', () => { state.online = true; scheduleRender(); });
+  window.addEventListener('online', () => { state.online = true; scheduleRender(); flushOutbox(); });
   window.addEventListener('offline', () => { state.online = false; scheduleRender(); });
 }
 
@@ -2477,7 +2556,7 @@ async function boot() {
 
   if (DEMO) {
     store = createMemoryStore();
-    window.__garage = { state, store, derive, ipcFactor, buildDrivvoPlan, buildJsonPlan, computeAlerts, serviceCounters,
+    window.__garage = { state, store, derive, ipcFactor, cifrarSobre, b64u, deb64u, fzEvent, fzId, fzQueue, flushOutbox, leerCodigoFG, fzStatus, buildDrivvoPlan, buildJsonPlan, computeAlerts, serviceCounters,
       parseCSV, finishPlan, executePlan, showPlanPreview, migrateSettings, SERVICE_ITEMS, DATE_ALERTS, GROUPS, openOnboarding, markReviewed, kmRef, openAlertExpense, lastExpenseFor,
       REC_TIPOS, recurrentesList, recPayments, recCuotas, recStatus, recHistory, migrateSeguro, openRecurrenteModal, openRecPayment, openRecHistory };   // solo para pruebas locales (tests/smoke.mjs)
     enterApp({ uid: 'demo', email: 'demo@local' });

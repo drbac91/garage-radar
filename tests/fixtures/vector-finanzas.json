@@ -1,0 +1,25 @@
+{
+  "k": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "carga": {
+    "id": "abc12345",
+    "iv": "ZGVmZ2hpamtsbW5v",
+    "claro": "{\"id\": \"abc12345\", \"fecha\": \"2026-11-06\", \"monto\": \"1.234,50\", \"cuenta\": \"Visa\", \"categoria\": \"Súper\", \"descripcion\": \"ñandú ✓\"}",
+    "sobre": {
+      "v": 1,
+      "tipo": "carga",
+      "id": "abc12345",
+      "iv": "ZGVmZ2hpamtsbW5v",
+      "datos": "Mzm3AlvTdrxfADzZ6FZeyGDuJijtCZAaxvOWaNmRlXqixHHxYSKtJtHTWlKSLL6gOWG4xRFkcxvO3Znmza2FqGv5vmCiKhk_q027KmLrE8pEWnxV06Dqqa2YV-ZBM2wCTcviGxlvlF6Rnru2wX_RmEFC73HjQ5kWccjy3753sufQAwuKFAGf-FIDfmOk47823k3sa9w"
+    }
+  },
+  "foto": {
+    "iv": "yMnKy8zNzs_Q0dLT",
+    "claro": "{\"disponible\":{\"ARS\":\"1500000.00\"},\"nota\":\"foto de prueba ñ\"}",
+    "sobre": {
+      "v": 1,
+      "tipo": "foto",
+      "iv": "yMnKy8zNzs_Q0dLT",
+      "datos": "aloFsvW8lE4dXnPbPDyQNqHVv4o-SZkR3ZkL0eq_m9nu8QaE_HBeyxDFZsHfY27Au9Q7yPZ4knJ6OIUkgy_o_Z_wHrMKwNTvjeK9aTGw"
+    }
+  }
+}

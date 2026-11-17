@@ -252,6 +252,42 @@ async function main() {
       await ctx.close();
     });
 
+    await test('F2 envío a Finanzas: sobre compatible con el vector común, evento válido, cola y rechazos', async () => {
+      const { ctx, page, errors } = await openDemo(browser, base);
+      const vec = JSON.parse(await readFile(new URL('./fixtures/vector-finanzas.json', import.meta.url), 'utf8'));   // copia del vector común de Finanzas (clave de prueba)
+      const r = await page.evaluate(async v => {
+        const g = window.__garage, out = {};
+        // 1) el cifrado es el de Finanzas: reproduce el sobre del vector común byte a byte
+        const s = await g.cifrarSobre(g.deb64u(v.k), 'carga', new TextEncoder().encode(v.carga.claro), v.carga.id, g.deb64u(v.carga.iv));
+        out.vector = s.datos === v.carga.sobre.datos;
+        // 2) evento
+        out.ev = g.fzEvent('gasto', { id: 'abc123', fecha: '2026-11-17T10:00:00', categoria: 'OTROS', tipo: 'Peaje', descripcion: '', monto: 1500.5, cuenta: 'Mercado Pago', cuotas: 1, odometro: null });
+        out.fuel = g.fzEvent('combustible', { id: 'f1', fecha: '2026-11-17T10:00:00', combustible: 'GNC', estacion: 'YPF', volumen: 13.48, costoTotal: 9692.12, odometro: 216188, cuenta: 'Visa', cuotas: 3 });
+        out.sinCuenta = g.fzEvent('gasto', { id: 'x1', fecha: '2026-11-17', monto: 10, cuenta: null });
+        out.idLargo = g.fzId('a'.repeat(100)).length;
+        // 3) cola: vincular, 500 se reintenta, 200 la saca, 403 va a rechazados
+        const k = g.b64u(new Uint8Array(32).fill(7)), token = 'T'.repeat(40);
+        localStorage.setItem('gr_fz_link', JSON.stringify({ url: 'https://buzon.example', k, token }));
+        localStorage.setItem('gr_fz_outbox', JSON.stringify([out.ev, out.fuel]));
+        const llamadas = []; let modo = 500;
+        const fake = async (url, o) => { const id = JSON.parse(o.body).id; llamadas.push([url, o.headers.Authorization === 'Bearer ' + token, JSON.parse(o.body).tipo, id]);
+          const st = modo === 'mixto' ? (id === 'gr-abc123' ? 403 : 200) : modo; return { ok: st === 200, status: st }; };
+        await g.flushOutbox(fake); out.tras500 = [g.fzStatus().pend, llamadas.length];
+        modo = 'mixto'; await g.flushOutbox(fake); out.tras = [g.fzStatus().pend, g.fzStatus().bad.map(b => b.status)];
+        out.llamada = llamadas[0];
+        return out;
+      }, vec);
+      eq(r.vector, true, 'sobre idéntico al vector común de Finanzas');
+      eq(r.ev, { v: 1, origen: 'garage', evento: 'crea', id: 'gr-abc123', tipo: 'gasto', fecha: '2026-11-17', cuenta: 'Mercado Pago', cuotas: 1, monto: '1500.50', categoria: 'Otros', descripcion: 'Peaje' }, 'evento de gasto');
+      eq([r.fuel.litros, r.fuel.combustible, r.fuel.odometro, r.fuel.monto, r.fuel.cuotas], ['13.48', 'GNC', '216188', '9692.12', 3], 'evento de combustible');
+      eq([r.sinCuenta, r.idLargo], [null, 64], 'sin cuenta no hay evento; el id se acota a 64');
+      eq(r.tras500, [2, 1], '500: se corta y queda todo pendiente');
+      eq(r.tras, [0, [403]], '403 sale de la cola a rechazados y el 200 siguiente la vacía');
+      eq(r.llamada, ['https://buzon.example/api/buzon', true, 'garage', 'gr-abc123'], 'URL, token y sobre garage');
+      eq(errors, [], 'errores de consola');
+      await ctx.close();
+    });
+
     await test('import de respaldo JSON aplica ajustes y conteo de alertas', async () => {
       const { ctx, page, errors } = await openDemo(browser, base);
       const res = await page.evaluate(async t => {
@@ -532,7 +568,7 @@ async function main() {
       eq(JSON.stringify({ ...after, ultimoBateriaFecha: undefined }), JSON.stringify({ ...JSON.parse(before), ultimoBateriaFecha: undefined }), 'ajustes tras guardar sin cambios');
       eq(after.ultimoBateriaFecha, '2026-10-10', 'un valor llegado con el formulario abierto no se pisa con null');
       await page.locator('[data-view=vencimientos] [data-action=open-settings]').click();
-      await page.locator('#st-form details.more-info summary').click();
+      await page.locator('#st-form details.more-info:not(#st-fz) summary').click();
       await page.locator('[data-noaplica=kitSeguridad]').check();
       await page.locator('#st-form button[type=submit]').click();
       await page.locator('#st-form').waitFor({ state: 'detached' });
