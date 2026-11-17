@@ -1849,6 +1849,7 @@ function openRefuelModal(existing) {
         <div class="field"><label for="fl-fecha">Fecha</label><input id="fl-fecha" type="date" required></div>
       </div>
       <p class="help" style="margin:-4px 0 0">Completá dos de los tres (cantidad, precio, total) y el tercero se calcula solo.</p>
+      ${payFieldsHTML(existing || {}, existing, 'fl')}
       <div class="field" id="fl-grado-wrap" hidden>
         <label for="fl-grado">Grado de nafta</label>
         <select id="fl-grado"><option value="Nafta">Nafta</option><option value="Nafta Super">Nafta Super</option><option value="Nafta Premium">Nafta Premium</option></select>
@@ -1893,8 +1894,10 @@ async function submitRefuel(e, el) {
     const w = $('#fl-warn'); w.textContent = `La carga previa (${fmtDate(prev.fecha)}) tiene ${nf(prev.odometro)} km y estás ingresando ${nf(odo)} km. Tocá Guardar de nuevo para confirmar.`; w.hidden = false;
     return;
   }
+  const pay = readPayFields(el, 'fl'); if (pay.error) return flErr(pay.error);
   const time = editing && datePart(editing.fecha) === fecha ? (String(editing.fecha).slice(11) || '12:00:00') : nowTime();
   const doc = {
+    cuenta: pay.cuenta, cuotas: pay.cuotas,
     ...(editing ? { id: editing.id } : {}), fecha: `${fecha}T${time}`, odometro: odo, combustible: f, grado: f === 'NAFTA' ? $('#fl-grado').value : null,
     volumen: vol, costoTotal: costo, precioUnitario: pu, lleno: state.ui.lleno, estacion: $('#fl-estacion').value.trim(), notas: editing?.notas || '', origen: editing?.origen || 'manual'
   };
@@ -1974,6 +1977,7 @@ function openExpenseModal(existing, ctx = null) {
         <div class="field"><label for="gx-fecha">Fecha</label><input id="gx-fecha" type="date" value="${esc(datePart(it.fecha) || todayISO())}" required></div>
         <div class="field"><label for="gx-odo">Odómetro (opcional)</label><input id="gx-odo" class="num" inputmode="numeric" value="${Number.isFinite(it.odometro) ? it.odometro : ''}"></div>
       </div>
+      ${payFieldsHTML(it, existing, 'gx')}
       ${ctx && ctx.next ? `<div class="field"><label for="gx-next">Próximo vencimiento</label><input id="gx-next" type="date" value="${esc(ctx.next)}"><span class="help" style="margin:0">Se actualiza el vencimiento de ${esc(head.label)} al guardar.</span></div>` : ''}
       <div class="field"><label for="gx-desc">Descripción (opcional)</label><input id="gx-desc" maxlength="200" value="${esc(it.descripcion || '')}"></div>
       <div class="field"><label for="gx-local">Local (opcional)</label><input id="gx-local" maxlength="80" value="${esc(it.local || '')}"></div>
@@ -2033,6 +2037,7 @@ function openExpenseModal(existing, ctx = null) {
     if (!Number.isFinite(monto) || monto < 0) return err('Ingresá un monto válido.');
     if (odoRaw && !(odo > 0)) return err('El odómetro debe ser un número mayor a 0.');
     if (resets.some(a => a.km) && !odo) return err('Para reiniciar un contador por km ingresá el odómetro del service.');
+    const pay = readPayFields(el, 'gx'); if (pay.error) return err(pay.error);
     const next = $('#gx-next', el) ? $('#gx-next', el).value : '';
     if (next && !isValidDate(next)) return err('Ingresá una fecha válida para el próximo vencimiento.');
     if (next && next <= fecha) return err('El próximo vencimiento tiene que ser posterior a la fecha del pago.');
@@ -2045,7 +2050,7 @@ function openExpenseModal(existing, ctx = null) {
     } else if (existing) recF = recFieldsOf(existing);   // vínculo a un recurrente que ya no existe: se conserva tal cual
     const time = existing && datePart(existing.fecha) === fecha ? (String(existing.fecha).slice(11) || '12:00:00') : nowTime();
     await store.save('expenses', {
-      ...(existing ? { id: existing.id } : {}), fecha: `${fecha}T${time}`, odometro: odo, categoria: cat,
+      ...(existing ? { id: existing.id } : {}), fecha: `${fecha}T${time}`, odometro: odo, categoria: cat, cuenta: pay.cuenta, cuotas: pay.cuotas,
       tipo: $('#gx-tipo', el).value.trim() || CATS[cat].short, descripcion: $('#gx-desc', el).value.trim(), monto, local: $('#gx-local', el).value.trim(),
       grupoId: existing?.grupoId || null, origen: existing?.origen || 'manual',
       ...((link || existing?.vencimientoId) ? { vencimientoId: link ? link.id : existing.vencimientoId } : {}),   // qué alerta originó el gasto
@@ -2066,6 +2071,27 @@ function openExpenseModal(existing, ctx = null) {
 }
 
 /* ---- Configurar vencimientos y odómetros base ---- */
+// Cuenta/medio de pago (nombre tal como está en Finanzas) y cuotas de cada gasto o carga. Finanzas es la dueña del monto y la cuenta.
+const NO_ACCOUNT = '__none';
+const cuentasList = (s = state.settings || {}) => (Array.isArray(s.cuentas) ? s.cuentas : []).filter(c => typeof c === 'string' && c.trim());
+const lastCuenta = () => [...state.expenses, ...state.refuels].filter(x => x.cuenta).sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)))[0]?.cuenta || '';
+function payFieldsHTML(it, existing, idp) {
+  const list = cuentasList(), cur = existing ? (it.cuenta || NO_ACCOUNT) : (list.includes(lastCuenta()) ? lastCuenta() : list.length === 1 ? list[0] : '');
+  if (cur && cur !== NO_ACCOUNT && !list.includes(cur)) list.push(cur);   // una cuenta ya guardada que se sacó de la lista
+  const opt = (v, t) => `<option value="${esc(v)}" ${v === cur ? 'selected' : ''}>${esc(t)}</option>`;
+  return `<div class="grid-2">
+    <div class="field"><label for="${idp}-cuenta">Cuenta / medio de pago</label><select id="${idp}-cuenta">${opt('', 'Elegí la cuenta…')}${list.map(c => opt(c, c)).join('')}${opt(NO_ACCOUNT, 'Sin cuenta (no va a Finanzas)')}</select></div>
+    <div class="field"><label for="${idp}-cuotas">Cuotas</label><input id="${idp}-cuotas" class="num" inputmode="numeric" value="${Number.isInteger(it.cuotas) ? it.cuotas : 1}"></div>
+  </div>${list.length ? '' : '<p class="help" style="margin:-4px 0 0">Cargá tus cuentas de Finanzas en Configurar para elegirlas acá.</p>'}`;
+}
+// Devuelve { cuenta, cuotas } o { error }.
+function readPayFields(el, idp) {
+  const v = $(`#${idp}-cuenta`, el).value, cuotas = Number($(`#${idp}-cuotas`, el).value);
+  if (!v) return { error: 'Elegí con qué cuenta pagaste (o “Sin cuenta”).' };
+  if (!Number.isInteger(cuotas) || cuotas < 1 || cuotas > 72) return { error: 'Las cuotas tienen que ser un entero entre 1 y 72.' };
+  return { cuenta: v === NO_ACCOUNT ? null : v, cuotas };
+}
+
 function openSettingsModal() {
   const s = state.settings || {}, v = s.vehiculo || {}, ven = s.vencimientos || {}, off = s.noAplica || {};
   const el = openModal({ title: 'Configurar vehículo y vencimientos', body: `
@@ -2076,6 +2102,8 @@ function openSettingsModal() {
         <div class="field"><label for="st-anio">Año</label><input id="st-anio" inputmode="numeric" value="${Number.isFinite(v.anio) ? v.anio : ''}"></div>
         <div class="field"><label for="st-tanque">Tanque (L)</label><input id="st-tanque" inputmode="decimal" value="${Number.isFinite(v.tanque) ? String(v.tanque).replace('.', ',') : ''}"></div>
       </div>
+      <div class="field"><label for="st-cuentas">Cuentas de Finanzas (una por línea)</label><textarea id="st-cuentas" rows="4" maxlength="2000" placeholder="Mercado Pago&#10;Visa Galicia&#10;Efectivo">${esc(cuentasList(s).join('\n'))}</textarea>
+        <span class="help" style="margin:0">Escribilas igual que en Finanzas: así se reconocen al enviar los gastos.</span></div>
       <div class="tile-label" style="margin-top:6px">Vencimientos (fecha)</div>
       <div class="grid-2">
         ${DATE_ALERTS.map(a => `<div class="field"><label for="st-${a.key}">${esc(a.label)}</label><input id="st-${a.key}" type="date" value="${esc(datePart(ven[a.key]))}"></div>`).join('')}
@@ -2108,6 +2136,11 @@ function openSettingsModal() {
     patch.vehiculo.nombre = $('#st-nombre', el).value.trim(); patch.vehiculo.modelo = $('#st-modelo', el).value.trim();
     const anio = parseKm($('#st-anio', el).value), tanque = parseNum($('#st-tanque', el).value);
     patch.vehiculo.anio = Number.isFinite(anio) ? anio : null; patch.vehiculo.tanque = Number.isFinite(tanque) ? tanque : null;
+    if (changed('st-cuentas')) {
+      const cs = [...new Set($('#st-cuentas', el).value.split('\n').map(x => x.trim()).filter(Boolean))];
+      if (cs.length > 40 || cs.some(c => c.length > 60)) return err('Hasta 40 cuentas, de 60 caracteres como máximo.');
+      patch.cuentas = cs;
+    }
     for (const a of DATE_ALERTS) {
       const val = $('#st-' + a.key, el).value;
       if (val && !isValidDate(val)) return err(`Fecha inválida en ${a.label}.`);

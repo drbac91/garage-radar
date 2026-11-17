@@ -53,6 +53,8 @@ async function openDemo(browser, base) {
   await page.waitForFunction(() => {
     const g = window.__garage; return g && g.state.loaded.refuels && g.state.loaded.expenses && g.state.loaded.settings;
   }, null, { timeout: 15000 });
+  // Una sola cuenta configurada queda preseleccionada: los tests de formularios no dependen de elegirla.
+  await page.evaluate(() => window.__garage.store.saveSettings({ cuentas: ['Efectivo'] }));
   return { ctx, page, errors };
 }
 
@@ -212,6 +214,40 @@ async function main() {
       });
       eq(r.nominal.map(x => +x.toFixed(4)), [15, 15, 10, 5], 'nominal: 1500 / 100 km');
       eq(r.real.map(x => +x.toFixed(4)), [18.15, 18.15], 'real: 1500 × 1,21 / 100 km');
+      eq(errors, [], 'errores de consola');
+      await ctx.close();
+    });
+
+    await test('F1 cuenta y cuotas: obligatoria al guardar, se conserva y «Sin cuenta» queda sin enviar', async () => {
+      const { ctx, page, errors } = await openDemo(browser, base);
+      await page.evaluate(() => window.__garage.store.saveSettings({ cuentas: ['Mercado Pago', 'Visa'] }));
+      await settle(page);
+      await goTab(page, 'gastos');
+      await page.locator('[data-action=new-expense]').click();
+      await page.locator('#gx-form').waitFor({ state: 'visible' });
+      eq(await page.locator('#gx-cuenta').inputValue(), '', 'con dos cuentas no hay ninguna preseleccionada');
+      await page.locator('#gx-monto').fill('1000');
+      await page.locator('#gx-form button[type=submit]').click();
+      assert(await page.locator('#gx-error').isVisible(), 'sin cuenta debería mostrar un error');
+      eq(await page.evaluate(() => window.__garage.state.expenses.length), 0, 'no se guardó sin cuenta');
+      await page.locator('#gx-cuenta').selectOption('Visa'); await page.locator('#gx-cuotas').fill('3');
+      await page.locator('#gx-form button[type=submit]').click();
+      await page.locator('#gx-form').waitFor({ state: 'detached' });
+      await settle(page);
+      eq(await page.evaluate(() => window.__garage.state.expenses.map(e => [e.cuenta, e.cuotas])), [['Visa', 3]], 'cuenta y cuotas guardadas');
+      // El siguiente gasto propone la última cuenta usada; «Sin cuenta» se guarda como null.
+      await page.locator('[data-action=new-expense]').click();
+      eq(await page.locator('#gx-cuenta').inputValue(), 'Visa', 'propone la última cuenta usada');
+      await page.locator('#gx-monto').fill('500'); await page.locator('#gx-cuenta').selectOption('__none');
+      await page.locator('#gx-form button[type=submit]').click();
+      await page.locator('#gx-form').waitFor({ state: 'detached' });
+      await settle(page);
+      eq(await page.evaluate(() => window.__garage.state.expenses.map(e => String(e.cuenta)).sort()), ['Visa', 'null'], 'sin cuenta queda en null');
+      // Cuotas inválidas.
+      await page.locator('[data-action=new-expense]').click();
+      await page.locator('#gx-monto').fill('10'); await page.locator('#gx-cuotas').fill('0');
+      await page.locator('#gx-form button[type=submit]').click();
+      assert(await page.locator('#gx-error').isVisible(), 'cuotas 0 debería rechazarse');
       eq(errors, [], 'errores de consola');
       await ctx.close();
     });
