@@ -104,7 +104,7 @@ async function main() {
       const { ctx, page, errors } = await openDemo(browser, base);
       if (INJECT) await page.evaluate(() => console.error('error inyectado por SMOKE_INJECT_ERROR'));
       const api = await page.evaluate(() => Object.keys(window.__garage).sort());
-      for (const k of ['parseCSV', 'finishPlan', 'executePlan', 'showPlanPreview', 'computeAlerts', 'serviceCounters', 'derive', 'buildDrivvoPlan', 'buildJsonPlan', 'state'])
+      for (const k of ['parseCSV', 'finishPlan', 'executePlan', 'showPlanPreview', 'computeAlerts', 'serviceCounters', 'derive', 'ipcFactor', 'buildDrivvoPlan', 'buildJsonPlan', 'state'])
         assert(api.includes(k), `window.__garage no expone ${k}`);
       assert(await page.locator('#screen-app').isVisible(), 'la pantalla principal no está visible');
       const s = await alertSummary(page);
@@ -168,6 +168,30 @@ async function main() {
       eq(r.all, [441000, 20000, 2], 'todo el historial');
       eq(r.w12, [40000, 10000, 1, 1], 'ventana 12 meses: km desde el último registro anterior');
       eq(r.kmNow, [120000, 120000], 'kmNow no depende de la ventana');
+      eq(errors, [], 'errores de consola');
+      await ctx.close();
+    });
+
+    await test('M2 pesos reales: factor IPC, costo por km real y sin IPC cae a nominal', async () => {
+      const { ctx, page, errors } = await openDemo(browser, base);
+      const r = await page.evaluate(async () => {
+        const g = window.__garage, ym = m => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - m); return d.toISOString().slice(0, 7); };
+        const f = (ipc, a, b) => g.ipcFactor(ipc, a, b);
+        const out = { f: [f({ '2026-02': 10, '2026-03': 10 }, '2026-01', '2026-03'), f({ '2026-02': 10 }, '2026-01', '2026-03'), f({ '2026-02': 10 }, '2026-02', '2026-03')] };
+        const iso = m => ym(m) + '-15';
+        const mk = (id, m, odo, tot) => ({ id, fecha: iso(m), combustible: 'NAFTA', odometro: odo, volumen: 100, costoTotal: tot, lleno: true });
+        for (const x of [mk('a', 3, 1000, 0), mk('b', 2, 1100, 1000)]) await g.store.save('refuels', x);
+        await new Promise(r => setTimeout(r, 80));
+        out.sin = [g.derive(0).cpkReal, g.derive(0).cpk];
+        // IPC 10 % el mes pasado y 10 % este mes (o el último publicado): el gasto de hace 2 meses pesa 1,1 · 1,1
+        await g.store.saveSettings({ ipc: { [ym(1)]: 10, [ym(0)]: 10 } });
+        await new Promise(r => setTimeout(r, 80));
+        const D = g.derive(0); out.con = [D.cpk, D.cpkReal, D.ipcMes === ym(0)];
+        return out;
+      });
+      eq(r.f.map(x => +x.toFixed(4)), [1.21, 1.1, 1], 'factor IPC');
+      eq(r.sin, [null, 10], 'sin IPC: no hay versión real');
+      eq(r.con.map(x => typeof x === 'number' ? +x.toFixed(4) : x), [10, 12.1, true], 'con IPC: 1000 de hace 2 meses → 1210 / 100 km');
       eq(errors, [], 'errores de consola');
       await ctx.close();
     });

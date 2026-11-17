@@ -942,6 +942,7 @@ function startSession() {
       // Contadores desde el historial al abrir: así los ítems nuevos del catálogo toman los gastos ya cargados.
       // Seguro de repetir: serviceCounters solo avanza y devuelve {} cuando no hay nada nuevo. Solo con ajustes del
       // servidor: comparar contra una caché vieja podría pisar un valor más nuevo cargado desde otro dispositivo.
+      if (n === 'settings' && settingsFresh) refreshIpc();
       if (settingsFresh && state.loaded.expenses) {
         const cp = serviceCounters(state.expenses, state.settings || {});
         if (Object.keys(cp).length) store.saveSettings(cp);
@@ -951,6 +952,32 @@ function startSession() {
   scheduleRender();
 }
 let settingsFresh = false;
+
+// IPC mensual (variación %) de la API pública que ya usa Finanzas; no se envía ningún dato del usuario.
+// Se guarda en settings.ipc {AAAA-MM: valor} y se refresca como mucho una vez por semana. Sin red: se usa lo guardado.
+let ipcBusy = false;
+async function refreshIpc(fetchFn = fetch) {
+  const s = state.settings || {};
+  if (DEMO || ipcBusy || (s.ipcFecha && Date.now() - Date.parse(s.ipcFecha) < 7 * 864e5)) return;
+  ipcBusy = true;
+  try {
+    const r = await fetchFn('https://api.argentinadatos.com/v1/finanzas/indices/inflacion');
+    if (!r.ok) throw new Error('http ' + r.status);
+    const ipc = {};
+    for (const x of (await r.json()).slice(-72)) {
+      const v = Number(x.valor), ym = String(x.fecha).slice(0, 7);
+      if (/^\d{4}-\d{2}$/.test(ym) && Number.isFinite(v) && Math.abs(v) < 100) ipc[ym] = v;
+    }
+    if (Object.keys(ipc).length) await store.saveSettings({ ipc, ipcFecha: new Date().toISOString() });
+  } catch (e) { /* sin red o API caída: se sigue con el último IPC guardado */ } finally { ipcBusy = false; }
+}
+// Factor para llevar pesos del mes `desde` a pesos del mes `hasta` (AAAA-MM): producto de (1 + IPC/100) de los meses
+// en (desde, hasta]. Un mes sin dato no ajusta (igual que Finanzas), así que el factor nunca se inventa.
+function ipcFactor(ipc, desde, hasta) {
+  let f = 1;
+  for (const [ym, v] of Object.entries(ipc || {})) if (ym > desde && ym <= hasta) f *= 1 + v / 100;
+  return f;
+}
 function stopSession() { unsubs.forEach(u => { try { u(); } catch (e) { /* noop */ } }); unsubs = []; }
 
 /* ============================= 5. CÁLCULOS =============================== */
@@ -1018,11 +1045,16 @@ function derive(win = state.ui.win) {
   const mixTotal = mixKm.NAFTA + mixKm.GNC;
   const mix = mixTotal > 0 ? { GNC: mixKm.GNC / mixTotal, NAFTA: mixKm.NAFTA / mixTotal, km: mixKm } : null;
 
+  // Pesos reales: cada gasto se lleva al último mes con IPC publicado (<= hoy). Sin IPC guardado, no hay versión real.
+  const ipc = (state.settings || {}).ipc || {}, ipcMes = Object.keys(ipc).filter(k => k <= todayISO().slice(0, 7)).sort().pop() || null;
+  const real = (x, amt) => ipcMes ? (amt || 0) * ipcFactor(ipc, datePart(x.fecha).slice(0, 7), ipcMes) : null;
   const refW = state.refuels.filter(inWin);
   const fuelTotal = refW.reduce((a, r) => a + (r.costoTotal || 0), 0);
   const otherTotal = ex.reduce((a, e) => a + (e.monto || 0), 0);
   const span = kmNow !== null ? kmNow - kmStart : 0;
   const cpk = span > 0 ? (fuelTotal + otherTotal) / span : null;
+  const realTotal = ipcMes ? refW.reduce((a, r) => a + real(r, r.costoTotal), 0) + ex.reduce((a, e) => a + real(e, e.monto), 0) : null;
+  const cpkReal = realTotal !== null && span > 0 ? realTotal / span : null;
 
   const catTotals = { COMBUSTIBLE: fuelTotal };
   CAT_KEYS.forEach(k => { catTotals[k] = 0; });
@@ -1039,7 +1071,7 @@ function derive(win = state.ui.win) {
   state.refuels.forEach(r => { const i = mIdx.get(String(r.fecha).slice(0, 7)); if (i !== undefined) months[i].fuel += r.costoTotal || 0; });
   ex.forEach(e => { const i = mIdx.get(String(e.fecha).slice(0, 7)); if (i !== undefined) months[i].other += e.monto || 0; });
 
-  return { win, nFuel: refW.length, nExp: ex.length, kmNow, kmMin, span, segs, segById, eff, mix, fuelTotal, otherTotal, cpk, catTotals, months };
+  return { win, ipcMes, realTotal, cpkReal, nFuel: refW.length, nExp: ex.length, kmNow, kmMin, span, segs, segById, eff, mix, fuelTotal, otherTotal, cpk, catTotals, months };
 }
 
 // Km de referencia para los contadores: el odómetro registrado; si todavía no hay cargas ni gastos con odómetro,
@@ -1415,6 +1447,14 @@ function renderRadar(D) {
   }).join('');
 }
 
+const heroCpk = D => { const v = D.cpkReal !== null ? D.cpkReal : D.cpk; return v !== null ? money(v, 2) : '—'; };
+const heroSub = D => {
+  if (D.cpk === null) return 'Se necesitan al menos 2 registros con odómetro';
+  const base = `${money(D.fuelTotal + D.otherTotal)} gastados en ${nf(D.span)} km`;
+  return D.cpkReal !== null
+    ? `En pesos de ${esc(ymLabel(D.ipcMes))} (ajustado por IPC) · sin ajustar: ${money(D.cpk, 2)}/km<br>${base}`
+    : `Sin ajustar por inflación (todavía no hay IPC guardado) · ${base}`;
+};
 const winLabel = w => w > 0 ? `últimos ${w} meses` : 'todo el historial';
 const winChips = D => `<div class="chips" role="group" aria-label="Período de las métricas">${[3, 6, 12, 0].map(w => `<button class="chip" type="button" data-action="set-win" data-win="${w}" aria-pressed="${D.win === w}">${w ? w + ' meses' : 'Todo'}</button>`).join('')}</div>`;
 
@@ -1425,8 +1465,8 @@ function renderResumen(D) {
   box.innerHTML = winChips(D) + `
     <div class="hero">
       <div class="hero-label">Costo por kilómetro · ${winLabel(D.win)}</div>
-      <div class="hero-val num font-black">${D.cpk !== null ? money(D.cpk, 2) : '—'}<small>/km</small></div>
-      <div class="hero-sub">${D.cpk !== null ? `${money(D.fuelTotal + D.otherTotal)} en ${nf(D.span)} km recorridos` : 'Se necesitan al menos 2 registros con odómetro'}</div>
+      <div class="hero-val num font-black">${heroCpk(D)}<small>/km</small></div>
+      <div class="hero-sub">${heroSub(D)}</div>
     </div>
     <div class="grid-2">
       <div class="tile"><div class="tile-label">Rendimiento Nafta</div><div class="tile-val num">${f('NAFTA')}</div></div>
@@ -1449,8 +1489,8 @@ function renderPassport(D) {
   box.innerHTML = winChips(D) + `
     <div class="hero">
       <div class="hero-label">Costo por kilómetro · ${winLabel(D.win)}</div>
-      <div class="hero-val num font-black">${D.cpk !== null ? money(D.cpk, 2) : '—'}<small>/km</small></div>
-      <div class="hero-sub">${D.cpk !== null ? `${money(D.fuelTotal + D.otherTotal)} en ${nf(D.span)} km recorridos` : 'Se necesitan al menos 2 registros con odómetro'}</div>
+      <div class="hero-val num font-black">${heroCpk(D)}<small>/km</small></div>
+      <div class="hero-sub">${heroSub(D)}</div>
     </div>
     <div class="grid-2">
       <div class="tile"><div class="tile-label">Rendimiento Nafta</div><div class="tile-val num">${f('NAFTA')}</div><div class="tile-sub">${D.eff.NAFTA.count} tramos válidos</div></div>
@@ -2390,7 +2430,7 @@ async function boot() {
 
   if (DEMO) {
     store = createMemoryStore();
-    window.__garage = { state, store, derive, buildDrivvoPlan, buildJsonPlan, computeAlerts, serviceCounters,
+    window.__garage = { state, store, derive, ipcFactor, buildDrivvoPlan, buildJsonPlan, computeAlerts, serviceCounters,
       parseCSV, finishPlan, executePlan, showPlanPreview, migrateSettings, SERVICE_ITEMS, DATE_ALERTS, GROUPS, openOnboarding, markReviewed, kmRef, openAlertExpense, lastExpenseFor,
       REC_TIPOS, recurrentesList, recPayments, recCuotas, recStatus, recHistory, migrateSeguro, openRecurrenteModal, openRecPayment, openRecHistory };   // solo para pruebas locales (tests/smoke.mjs)
     enterApp({ uid: 'demo', email: 'demo@local' });
