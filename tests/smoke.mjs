@@ -139,7 +139,7 @@ async function main() {
       await settle(page);
 
       const after = await page.evaluate(() => {
-        const g = window.__garage, D = g.derive(), s = g.state.settings;
+        const g = window.__garage, D = g.derive(0), s = g.state.settings;
         return { kmNow: D.kmNow, fuelTotal: D.fuelTotal, otherTotal: D.otherTotal, vehiculo: s.vehiculo?.nombre,
           aceite: [s.ultimoAceiteKm, s.ultimoAceiteFecha], rotacion: s.ultimoRotacionKm };
       });
@@ -150,6 +150,24 @@ async function main() {
 
       const s = await alertSummary(page);
       eq({ red: s.red, yellow: s.yellow, green: s.green }, { red: [], yellow: [], green: ['ultimoAceiteKm', 'ultimoRotacionKm'] }, 'alertas tras Drivvo');
+      eq(errors, [], 'errores de consola');
+      await ctx.close();
+    });
+
+    await test('ventana temporal: costo por km y rendimiento solo con los últimos N meses', async () => {
+      const { ctx, page, errors } = await openDemo(browser, base);
+      const r = await page.evaluate(async () => {
+        const g = window.__garage, iso = m => { const d = new Date(); d.setMonth(d.getMonth() - m); return d.toISOString().slice(0, 10); };
+        // 30 meses atrás: 100000 km, lleno; 18 m: 110000 km, lleno 800 L ($400.000); 2 m: 120000 km, lleno 800 L ($40.000)
+        const mk = (id, m, odo, tot) => ({ id, fecha: iso(m), combustible: 'NAFTA', odometro: odo, volumen: 800, costoTotal: tot, lleno: true });
+        for (const x of [mk('a', 30, 100000, 1000), mk('b', 18, 110000, 400000), mk('c', 2, 120000, 40000)]) await g.store.save('refuels', x);
+        await new Promise(r => setTimeout(r, 80));
+        const all = g.derive(0), w12 = g.derive(12);
+        return { all: [all.fuelTotal, all.span, all.eff.NAFTA.count], w12: [w12.fuelTotal, w12.span, w12.eff.NAFTA.count, w12.nFuel], kmNow: [all.kmNow, w12.kmNow] };
+      });
+      eq(r.all, [441000, 20000, 2], 'todo el historial');
+      eq(r.w12, [40000, 10000, 1, 1], 'ventana 12 meses: km desde el último registro anterior');
+      eq(r.kmNow, [120000, 120000], 'kmNow no depende de la ventana');
       eq(errors, [], 'errores de consola');
       await ctx.close();
     });

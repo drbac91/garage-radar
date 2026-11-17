@@ -809,7 +809,7 @@ const state = {
   user: null, refuels: [], expenses: [], settings: {},
   loaded: { refuels: false, expenses: false, settings: false },
   online: navigator.onLine, pending: false,
-  ui: { fuel: 'GNC', cat: 'ALL', fuelLimit: 15, gxLimit: 20, expanded: new Set(), editRefuel: null, lleno: true, flOrder: [], flPre: null, flFuel: 'GNC', flArmed: null, tab: 'resumen', grpOpen: new Map() }
+  ui: { win: 12, fuel: 'GNC', cat: 'ALL', fuelLimit: 15, gxLimit: 20, expanded: new Set(), editRefuel: null, lleno: true, flOrder: [], flPre: null, flFuel: 'GNC', flArmed: null, tab: 'resumen', grpOpen: new Map() }
 };
 let store = null;       // almacén activo (memoria o Firestore)
 let unsubs = [];
@@ -982,17 +982,26 @@ function computeSegments(list) {
 }
 
 // Calcula todas las métricas derivadas a partir del estado.
-function derive() {
-  const rf = [...state.refuels].filter(r => Number.isFinite(r.odometro)).sort(byOdo);
-  const ex = state.expenses;
-  const odos = [...rf.map(r => r.odometro), ...ex.map(e => e.odometro)].filter(n => Number.isFinite(n) && n > 0);
-  const kmNow = odos.length ? Math.max(...odos) : null;
-  const kmMin = odos.length ? Math.min(...odos) : null;
+// `win` = ventana en meses (0 = todo el historial). Costo por km, rendimiento, mix y desglose usan solo lo de la ventana;
+// kmNow/kmMin (alertas) y las series de los gráficos siguen siendo globales.
+function derive(win = state.ui.win) {
+  const cut = win > 0 ? addMonths(todayISO(), -win) : null;
+  const inWin = x => !cut || datePart(x.fecha) >= cut;
+  const rfAll = [...state.refuels].filter(r => Number.isFinite(r.odometro)).sort(byOdo);
+  const rf = rfAll.filter(inWin);
+  const exAll = state.expenses, ex = exAll.filter(inWin);
+  const odosAll = [...rfAll.map(r => r.odometro), ...exAll.map(e => e.odometro)].filter(n => Number.isFinite(n) && n > 0);
+  const kmNow = odosAll.length ? Math.max(...odosAll) : null;
+  const kmMin = odosAll.length ? Math.min(...odosAll) : null;
+  // Km de partida de la ventana: el último odómetro anterior a ella (los km hasta el primer registro de la ventana
+  // también se gastaron dentro de ella); si no hay registros anteriores, el menor odómetro.
+  const before = cut ? [...rfAll.filter(r => !inWin(r)).map(r => r.odometro), ...exAll.filter(e => !inWin(e)).map(e => e.odometro)].filter(n => Number.isFinite(n) && n > 0) : [];
+  const kmStart = before.length ? Math.max(...before) : kmMin;
 
   const segs = {}, eff = {}, segById = {};
   for (const f of Object.keys(FUELS)) {
-    segs[f] = computeSegments(rf.filter(r => r.combustible === f));
-    const ok = segs[f].filter(s => s.valid);
+    segs[f] = computeSegments(rfAll.filter(r => r.combustible === f));
+    const ok = segs[f].filter(s => s.valid && inWin(s));
     const km = ok.reduce((a, s) => a + s.km, 0), vol = ok.reduce((a, s) => a + s.vol, 0);
     eff[f] = { value: vol > 0 ? km / vol : null, count: ok.length };
     segs[f].forEach(s => { segById[s.id] = s; });
@@ -1009,9 +1018,10 @@ function derive() {
   const mixTotal = mixKm.NAFTA + mixKm.GNC;
   const mix = mixTotal > 0 ? { GNC: mixKm.GNC / mixTotal, NAFTA: mixKm.NAFTA / mixTotal, km: mixKm } : null;
 
-  const fuelTotal = state.refuels.reduce((a, r) => a + (r.costoTotal || 0), 0);
+  const refW = state.refuels.filter(inWin);
+  const fuelTotal = refW.reduce((a, r) => a + (r.costoTotal || 0), 0);
   const otherTotal = ex.reduce((a, e) => a + (e.monto || 0), 0);
-  const span = kmNow !== null ? kmNow - kmMin : 0;
+  const span = kmNow !== null ? kmNow - kmStart : 0;
   const cpk = span > 0 ? (fuelTotal + otherTotal) / span : null;
 
   const catTotals = { COMBUSTIBLE: fuelTotal };
@@ -1029,7 +1039,7 @@ function derive() {
   state.refuels.forEach(r => { const i = mIdx.get(String(r.fecha).slice(0, 7)); if (i !== undefined) months[i].fuel += r.costoTotal || 0; });
   ex.forEach(e => { const i = mIdx.get(String(e.fecha).slice(0, 7)); if (i !== undefined) months[i].other += e.monto || 0; });
 
-  return { kmNow, kmMin, span, segs, segById, eff, mix, fuelTotal, otherTotal, cpk, catTotals, months };
+  return { win, nFuel: refW.length, nExp: ex.length, kmNow, kmMin, span, segs, segById, eff, mix, fuelTotal, otherTotal, cpk, catTotals, months };
 }
 
 // Km de referencia para los contadores: el odómetro registrado; si todavía no hay cargas ni gastos con odómetro,
@@ -1405,21 +1415,24 @@ function renderRadar(D) {
   }).join('');
 }
 
+const winLabel = w => w > 0 ? `últimos ${w} meses` : 'todo el historial';
+const winChips = D => `<div class="chips" role="group" aria-label="Período de las métricas">${[3, 6, 12, 0].map(w => `<button class="chip" type="button" data-action="set-win" data-win="${w}" aria-pressed="${D.win === w}">${w ? w + ' meses' : 'Todo'}</button>`).join('')}</div>`;
+
 function renderResumen(D) {
   const box = $('#resumen'), next = $('#next-list');
   if (!allLoaded()) { box.innerHTML = skeleton(3); next.innerHTML = skeleton(3); return; }
   const f = k => D.eff[k].value !== null ? `${nf(D.eff[k].value, 2)}<small>${FUELS[k].eff}</small>` : '—';
-  box.innerHTML = `
+  box.innerHTML = winChips(D) + `
     <div class="hero">
-      <div class="hero-label">Costo por kilómetro</div>
+      <div class="hero-label">Costo por kilómetro · ${winLabel(D.win)}</div>
       <div class="hero-val num font-black">${D.cpk !== null ? money(D.cpk, 2) : '—'}<small>/km</small></div>
       <div class="hero-sub">${D.cpk !== null ? `${money(D.fuelTotal + D.otherTotal)} en ${nf(D.span)} km recorridos` : 'Se necesitan al menos 2 registros con odómetro'}</div>
     </div>
     <div class="grid-2">
       <div class="tile"><div class="tile-label">Rendimiento Nafta</div><div class="tile-val num">${f('NAFTA')}</div></div>
       <div class="tile"><div class="tile-label">Rendimiento GNC</div><div class="tile-val num">${f('GNC')}</div></div>
-      <div class="tile"><div class="tile-label">Combustible</div><div class="tile-val num">${money(D.fuelTotal)}</div><div class="tile-sub">${state.refuels.length} cargas</div></div>
-      <div class="tile"><div class="tile-label">Otros gastos</div><div class="tile-val num">${money(D.otherTotal)}</div><div class="tile-sub">${state.expenses.length} ítems</div></div>
+      <div class="tile"><div class="tile-label">Combustible</div><div class="tile-val num">${money(D.fuelTotal)}</div><div class="tile-sub">${D.nFuel} cargas</div></div>
+      <div class="tile"><div class="tile-label">Otros gastos</div><div class="tile-val num">${money(D.otherTotal)}</div><div class="tile-sub">${D.nExp} ítems</div></div>
     </div>`;
   const A = computeAlerts(D), hot = A.filter(a => a.st === 'red' || a.st === 'yellow'), ok = A.filter(a => a.st === 'green');
   queueMicrotask(() => { const d = $('#next-ok'); if (d) d.addEventListener('toggle', () => { state.ui.okOpen = d.open; }); });
@@ -1433,17 +1446,17 @@ function renderPassport(D) {
   if (!allLoaded()) { box.innerHTML = skeleton(3); return; }
   const f = k => D.eff[k].value !== null ? `${nf(D.eff[k].value, 2)}<small>${FUELS[k].eff}</small>` : '—';
   const mixG = D.mix ? Math.round(D.mix.GNC * 100) : 0, mixN = D.mix ? 100 - mixG : 0;
-  box.innerHTML = `
+  box.innerHTML = winChips(D) + `
     <div class="hero">
-      <div class="hero-label">Costo por kilómetro</div>
+      <div class="hero-label">Costo por kilómetro · ${winLabel(D.win)}</div>
       <div class="hero-val num font-black">${D.cpk !== null ? money(D.cpk, 2) : '—'}<small>/km</small></div>
       <div class="hero-sub">${D.cpk !== null ? `${money(D.fuelTotal + D.otherTotal)} en ${nf(D.span)} km recorridos` : 'Se necesitan al menos 2 registros con odómetro'}</div>
     </div>
     <div class="grid-2">
       <div class="tile"><div class="tile-label">Rendimiento Nafta</div><div class="tile-val num">${f('NAFTA')}</div><div class="tile-sub">${D.eff.NAFTA.count} tramos válidos</div></div>
       <div class="tile"><div class="tile-label">Rendimiento GNC</div><div class="tile-val num">${f('GNC')}</div><div class="tile-sub">${D.eff.GNC.count} tramos válidos</div></div>
-      <div class="tile"><div class="tile-label">Combustible</div><div class="tile-val num">${money(D.fuelTotal)}</div><div class="tile-sub">${state.refuels.length} cargas</div></div>
-      <div class="tile"><div class="tile-label">Otros gastos</div><div class="tile-val num">${money(D.otherTotal)}</div><div class="tile-sub">${state.expenses.length} ítems</div></div>
+      <div class="tile"><div class="tile-label">Combustible</div><div class="tile-val num">${money(D.fuelTotal)}</div><div class="tile-sub">${D.nFuel} cargas</div></div>
+      <div class="tile"><div class="tile-label">Otros gastos</div><div class="tile-val num">${money(D.otherTotal)}</div><div class="tile-sub">${D.nExp} ítems</div></div>
     </div>
     <div class="mix">
       <div class="tile-label">Mix de uso (estimado)</div>
@@ -1469,7 +1482,7 @@ function renderFuel(D) {
   const lastRec = [...list].sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)))[0];
   const lastPrice = lastRec ? unitPrice(lastRec) : null;
   stats.innerHTML = `
-    <div class="tile"><div class="tile-label">Rendimiento histórico</div><div class="tile-val num" style="color:${F.color}">${D.eff[f].value !== null ? nf(D.eff[f].value, 2) : '—'}<small>${F.eff}</small></div><div class="tile-sub">${D.eff[f].count} tramos entre llenos</div></div>
+    <div class="tile"><div class="tile-label">Rendimiento · ${winLabel(D.win)}</div><div class="tile-val num" style="color:${F.color}">${D.eff[f].value !== null ? nf(D.eff[f].value, 2) : '—'}<small>${F.eff}</small></div><div class="tile-sub">${D.eff[f].count} tramos entre llenos</div></div>
     <div class="tile"><div class="tile-label">Último tramo</div><div class="tile-val num">${last ? nf(last.eff, 2) : '—'}<small>${F.eff}</small></div><div class="tile-sub">${last ? fmtDate(last.fecha) : 'sin tramos válidos'}</div></div>
     <div class="tile" style="grid-column:1/-1"><div class="tile-label">Último precio</div><div class="tile-val num">${lastPrice !== null ? money(lastPrice, 2) : '—'}<small>/${F.unit}</small></div></div>`;
 
@@ -1594,7 +1607,7 @@ function renderCharts(D) {
   box.innerHTML = `
     <div><div class="tile-label" style="margin-bottom:8px">Gasto mensual · últimos 12 meses</div>${monthlyChartSVG(D.months)}
       <div class="legend"><span><i style="background:#3b82ff"></i>Combustible</span><span><i style="background:#8b7bff"></i>Otros gastos</span></div></div>
-    <div><div class="tile-label" style="margin-bottom:10px">Desglose del gasto</div>
+    <div><div class="tile-label" style="margin-bottom:10px">Desglose del gasto · ${winLabel(D.win)}</div>
       ${rows.map(([k, name, col]) => `<div class="cat-row"><span class="cat-name">${esc(name)}</span><span class="num" style="font-weight:800">${money(D.catTotals[k])} <span class="muted" style="font-weight:600">· ${nf(D.catTotals[k] / total * 100, 0)}%</span></span><div class="cat-bar"><span style="width:${D.catTotals[k] / total * 100}%;background:${col}"></span></div></div>`).join('')}</div>
     <div class="span2 grid-2" style="gap:16px">
       <div><div class="tile-label" style="margin-bottom:6px">Tendencia GNC (km/m³ por carga completa)</div>${lineChartSVG(D.segs.GNC.filter(s => s.valid), 'var(--gnc)', 'km/m³')}</div>
@@ -2291,6 +2304,7 @@ const actions = {
     }
   },
   'more-refuels': () => { state.ui.fuelLimit += 20; renderAll(); },
+  'set-win': el => { state.ui.win = Number(el.dataset.win); renderAll(); },
   'filter-cat': el => { state.ui.cat = el.dataset.cat; state.ui.gxLimit = 20; renderExpenses(); },
   'new-expense': () => openExpenseModal(null),
   'edit-expense': el => { const e = state.expenses.find(x => x.id === el.dataset.id); if (e) openExpenseModal(e); },
