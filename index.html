@@ -1055,6 +1055,12 @@ function derive(win = state.ui.win) {
   const cpk = span > 0 ? (fuelTotal + otherTotal) / span : null;
   const realTotal = ipcMes ? refW.reduce((a, r) => a + real(r, r.costoTotal), 0) + ex.reduce((a, e) => a + real(e, e.monto), 0) : null;
   const cpkReal = realTotal !== null && span > 0 ? realTotal / span : null;
+  // Costo por km por categoría, en la misma unidad que el número grande (real si hay IPC, si no nominal): suman el total.
+  const parts = span > 0 ? { COMBUSTIBLE: 0, ...Object.fromEntries(CAT_KEYS.map(k => [k, 0])) } : null;
+  if (parts) {
+    const add = (k, x, amt) => { if (parts[k] !== undefined) parts[k] += (ipcMes ? real(x, amt) : amt || 0) / span; };
+    refW.forEach(r => add('COMBUSTIBLE', r, r.costoTotal)); ex.forEach(e => add(e.categoria, e, e.monto));
+  }
 
   const catTotals = { COMBUSTIBLE: fuelTotal };
   CAT_KEYS.forEach(k => { catTotals[k] = 0; });
@@ -1071,7 +1077,7 @@ function derive(win = state.ui.win) {
   state.refuels.forEach(r => { const i = mIdx.get(String(r.fecha).slice(0, 7)); if (i !== undefined) months[i].fuel += r.costoTotal || 0; });
   ex.forEach(e => { const i = mIdx.get(String(e.fecha).slice(0, 7)); if (i !== undefined) months[i].other += e.monto || 0; });
 
-  return { win, ipcMes, realTotal, cpkReal, nFuel: refW.length, nExp: ex.length, kmNow, kmMin, span, segs, segById, eff, mix, fuelTotal, otherTotal, cpk, catTotals, months };
+  return { win, parts, ipcMes, realTotal, cpkReal, nFuel: refW.length, nExp: ex.length, kmNow, kmMin, span, segs, segById, eff, mix, fuelTotal, otherTotal, cpk, catTotals, months };
 }
 
 // Km de referencia para los contadores: el odómetro registrado; si todavía no hay cargas ni gastos con odómetro,
@@ -1455,6 +1461,13 @@ const heroSub = D => {
     ? `En pesos de ${esc(ymLabel(D.ipcMes))} (ajustado por IPC) · sin ajustar: ${money(D.cpk, 2)}/km<br>${base}`
     : `Sin ajustar por inflación (todavía no hay IPC guardado) · ${base}`;
 };
+const cpkPartsHTML = D => {
+  if (!D.parts) return '';
+  const rows = [['COMBUSTIBLE', 'Combustible', '#3b82ff'], ...CAT_KEYS.map(k => [k, CATS[k].short, CATS[k].color])];
+  const tot = rows.reduce((a, [k]) => a + D.parts[k], 0) || 1;
+  return `<div class="tile" style="margin-bottom:12px"><div class="tile-label" style="margin-bottom:8px">Qué pesa en el costo por km</div>${rows.map(([k, name, col]) =>
+    `<div class="cat-row"><span class="cat-name">${esc(name)}</span><span class="num" style="font-weight:800">${money(D.parts[k], 2)}<small>/km</small></span><div class="cat-bar"><span style="width:${D.parts[k] / tot * 100}%;background:${col}"></span></div></div>`).join('')}</div>`;
+};
 const winLabel = w => w > 0 ? `últimos ${w} meses` : 'todo el historial';
 const winChips = D => `<div class="chips" role="group" aria-label="Período de las métricas">${[3, 6, 12, 0].map(w => `<button class="chip" type="button" data-action="set-win" data-win="${w}" aria-pressed="${D.win === w}">${w ? w + ' meses' : 'Todo'}</button>`).join('')}</div>`;
 
@@ -1492,6 +1505,7 @@ function renderPassport(D) {
       <div class="hero-val num font-black">${heroCpk(D)}<small>/km</small></div>
       <div class="hero-sub">${heroSub(D)}</div>
     </div>
+    ${cpkPartsHTML(D)}
     <div class="grid-2">
       <div class="tile"><div class="tile-label">Rendimiento Nafta</div><div class="tile-val num">${f('NAFTA')}</div><div class="tile-sub">${D.eff.NAFTA.count} tramos válidos</div></div>
       <div class="tile"><div class="tile-label">Rendimiento GNC</div><div class="tile-val num">${f('GNC')}</div><div class="tile-sub">${D.eff.GNC.count} tramos válidos</div></div>

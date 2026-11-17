@@ -63,9 +63,9 @@ Garage Radar sigue siendo el único formulario del auto. Al guardar, emite **un 
 
 | # | Nodo | Check | Depende |
 |---|---|---|---|
-| M1 | Ventana temporal en `derive()` + selector | test en `smoke.mjs` con fixture de 24 meses | — |
-| M2 | Pesos reales con tabla IPC | test: gasto de hace 12 m con IPC 100 % acumulado pesa el doble | M1 |
-| M3 | Desglose por tipo de gasto | suma de partes = total | M1 |
+| M1 ✅ | Ventana temporal en `derive()` + selector | test en `smoke.mjs` con fixture de 24 meses | — |
+| M2 ✅ | Pesos reales con tabla IPC | test: gasto de hace 12 m con IPC 100 % acumulado pesa el doble | M1 |
+| M3 ✅ | Desglose por tipo de gasto | suma de partes = total | M1 |
 | F0 | Token propio de Garage (permiso solo «carga», revocable) en el Worker | un token de Garage no puede leer ni usar el de iPhone | — |
 | F1 | Campo `cuenta`/`cuotas` en formularios + lista de cuentas en settings | test: no guarda envío sin cuenta | F0 |
 | F2 | Emisor de eventos con cola offline e id estable | test: reenviar no duplica; sin red queda pendiente | F1 |

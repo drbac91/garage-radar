@@ -196,6 +196,26 @@ async function main() {
       await ctx.close();
     });
 
+    await test('M3 desglose por km: las partes suman el costo por km (con y sin IPC)', async () => {
+      const { ctx, page, errors } = await openDemo(browser, base);
+      const r = await page.evaluate(async () => {
+        const g = window.__garage, ym = m => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - m); return d.toISOString().slice(0, 7); };
+        const mk = (id, m, odo, tot) => ({ id, fecha: ym(m) + '-15', combustible: 'NAFTA', odometro: odo, volumen: 100, costoTotal: tot, lleno: true });
+        for (const x of [mk('a', 3, 1000, 0), mk('b', 2, 1100, 1000)]) await g.store.save('refuels', x);
+        await g.store.save('expenses', { id: 'e1', fecha: ym(2) + '-16', categoria: 'TRAMITES', tipo: 'Seguro', monto: 500, odometro: 1100 });
+        await new Promise(r => setTimeout(r, 80));
+        const sum = D => Object.values(D.parts).reduce((a, b) => a + b, 0);
+        const a = g.derive(0); const nominal = [sum(a), a.cpk, a.parts.COMBUSTIBLE, a.parts.TRAMITES];
+        await g.store.saveSettings({ ipc: { [ym(1)]: 10, [ym(0)]: 10 } });
+        await new Promise(r => setTimeout(r, 80));
+        const b = g.derive(0); return { nominal, real: [sum(b), b.cpkReal] };
+      });
+      eq(r.nominal.map(x => +x.toFixed(4)), [15, 15, 10, 5], 'nominal: 1500 / 100 km');
+      eq(r.real.map(x => +x.toFixed(4)), [18.15, 18.15], 'real: 1500 × 1,21 / 100 km');
+      eq(errors, [], 'errores de consola');
+      await ctx.close();
+    });
+
     await test('import de respaldo JSON aplica ajustes y conteo de alertas', async () => {
       const { ctx, page, errors } = await openDemo(browser, base);
       const res = await page.evaluate(async t => {
