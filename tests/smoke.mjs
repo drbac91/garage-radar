@@ -288,6 +288,36 @@ async function main() {
       await ctx.close();
     });
 
+    await test('F4 editar y borrar lo ya enviado: corrige con lo de Finanzas, anula, y lo no enviado no sale', async () => {
+      const { ctx, page, errors } = await openDemo(browser, base);
+      const r = await page.evaluate(() => {
+        const g = window.__garage, out = {}, cola = () => JSON.parse(localStorage.getItem('gr_fz_outbox') || '[]');
+        localStorage.removeItem('gr_fz_link');   // sin vincular: la cola se llena y no se manda
+        const d = { id: 'abc123', fecha: '2026-11-17T10:00:00', categoria: 'OTROS', tipo: 'Peaje', descripcion: '', monto: 1500, cuenta: 'Efectivo', cuotas: 1, odometro: null };
+        g.fzQueue(g.fzEvent('gasto', d));
+        // el alta todavía en la cola: editar la rehace y borrar la saca, sin corrige ni anula
+        out.rehecha = [g.fzCambio('gasto', { ...d, monto: 1800 }), cola().map(e => [e.evento, e.monto])];
+        out.sacada = [g.fzCambio('gasto', d, true), cola().length, g.fzCambio('gasto', d, true), cola().length];
+        // ya enviada
+        g.fzQueue(g.fzEvent('gasto', d)); localStorage.setItem('gr_fz_outbox', '[]');
+        out.aviso0 = g.fzCambio('gasto', { ...d, descripcion: 'Autopista' });
+        out.aviso1 = g.fzCambio('gasto', { ...d, monto: 2000, cuenta: 'Ualá' });
+        g.fzCambio('gasto', d, true);
+        out.cola = cola();
+        out.despues = [g.fzCambio('gasto', d), cola().length];   // tras anular ya no se manda nada de ese gasto
+        out.nunca = [g.fzCambio('gasto', { ...d, id: 'viejo' }, true), cola().length];
+        return out;
+      });
+      eq(r.rehecha, ['', [['crea', '1800.00']]], 'alta sin enviar: se rehace con el monto nuevo');
+      eq(r.sacada, ['', 0, '', 0], 'alta sin enviar: borrar la saca de la cola');
+      eq([r.aviso0, r.aviso1 !== ''], ['', true], 'avisa solo si cambia monto/cuenta/cuotas');
+      eq(r.cola.map(e => [e.evento, e.gasto, e.rev, e.monto, e.cuenta]), [['corrige', 'gr-abc123', 1, '1500.00', 'Efectivo'], ['corrige', 'gr-abc123', 2, '1500.00', 'Efectivo'], ['anula', 'gr-abc123', 3, undefined, undefined]], 'corrige con lo de Finanzas y anula, rev creciente');
+      eq([r.cola[0].descripcion, new Set(r.cola.map(e => e.id)).size, r.cola.every(e => /^gr-[A-Za-z0-9_-]{22}$/.test(e.id) && e.id !== e.gasto)], ['Peaje · Autopista', 3, true], 'cada evento con id propio');
+      eq([r.despues, r.nunca], [['', 3], ['', 3]], 'lo anulado o nunca enviado no manda nada');
+      eq(errors, [], 'errores de consola');
+      await ctx.close();
+    });
+
     await test('import de respaldo JSON aplica ajustes y conteo de alertas', async () => {
       const { ctx, page, errors } = await openDemo(browser, base);
       const res = await page.evaluate(async t => {

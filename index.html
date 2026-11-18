@@ -999,10 +999,41 @@ function fzEvent(kind, d) {
   if (kind === 'combustible') return { ...base, categoria: 'Combustible', descripcion: [d.combustible, d.estacion].filter(Boolean).join(' · '), odometro: String(d.odometro), litros: String(d.volumen), combustible: d.combustible };
   return { ...base, categoria: (CATS[d.categoria] || CATS.OTROS).short, descripcion: [d.tipo, d.descripcion].filter(Boolean).join(' · ').slice(0, 200), ...(Number.isFinite(d.odometro) ? { odometro: String(d.odometro) } : {}) };
 }
+// Lo ya mandado, por gasto: { rev, monto, cuenta, cuotas } tal como lo recibió Finanzas (F4 lo necesita para corregir y anular).
+// shortcut: vive en ESTE dispositivo; editar o borrar desde otro no se propaga. Pasarlo a Firestore si se usan dos.
+const FZ_SENT = 'gr_fz_enviados';
+const fzNuevoId = () => 'gr-' + b64u(crypto.getRandomValues(new Uint8Array(16)));   // cada evento lleva su id; `gasto` es el del alta
 function fzQueue(ev) {
   if (!ev) return;
+  if (ev.evento === 'crea') lsSet(FZ_SENT, { ...lsGet(FZ_SENT, {}), [ev.id]: { rev: 0, monto: ev.monto, cuenta: ev.cuenta, cuotas: ev.cuotas } });
   lsSet(FZ_OUT, [...lsGet(FZ_OUT, []).filter(x => x.id !== ev.id), ev]);
   flushOutbox();
+}
+// F4: editar o borrar un gasto/carga que ya se mandó. Devuelve un aviso si cambió algo que es de Finanzas (monto, cuenta,
+// cuotas): eso no viaja, se cambia en Finanzas. Lo que nunca se mandó (viejo, sin cuenta, de otro dispositivo) no hace nada.
+function fzCambio(kind, d, borrar = false) {
+  const gasto = fzId(d.id), sent = lsGet(FZ_SENT, {}), prev = sent[gasto];
+  if (!prev) return '';
+  const q = lsGet(FZ_OUT, []);
+  if (q.some(x => x.id === gasto)) {   // el alta todavía no salió: se rehace o se saca de la cola, sin corregir nada
+    delete sent[gasto]; lsSet(FZ_SENT, sent);
+    lsSet(FZ_OUT, q.filter(x => x.id !== gasto && x.gasto !== gasto));
+    if (!borrar) fzQueue(fzEvent(kind, d));
+    return '';
+  }
+  const rev = prev.rev + 1;
+  if (borrar) {
+    delete sent[gasto]; lsSet(FZ_SENT, sent);
+    fzQueue({ v: 1, origen: 'garage', evento: 'anula', id: fzNuevoId(), gasto, rev });
+    return '';
+  }
+  const amount = kind === 'combustible' ? 'costoTotal' : 'monto';
+  const ev = fzEvent(kind, { ...d, cuenta: prev.cuenta, cuotas: prev.cuotas, [amount]: Number(prev.monto) });
+  sent[gasto] = { ...prev, rev }; lsSet(FZ_SENT, sent);
+  fzQueue({ ...ev, evento: 'corrige', id: fzNuevoId(), gasto, rev });
+  const nuevo = Number(d[amount] || 0).toFixed(2);
+  return nuevo !== prev.monto || (d.cuenta || null) !== prev.cuenta || (d.cuotas || 1) !== prev.cuotas
+    ? 'Monto, cuenta y cuotas no se cambian desde acá: corregilos también en Finanzas.' : '';
 }
 const fzStatus = () => ({ link: lsGet(FZ_LINK, null), pend: lsGet(FZ_OUT, []).length, bad: lsGet(FZ_BAD, []) });
 let fzBusy = false, fzError = '';
@@ -1961,10 +1992,10 @@ async function submitRefuel(e, el) {
     volumen: vol, costoTotal: costo, precioUnitario: pu, lleno: state.ui.lleno, estacion: $('#fl-estacion').value.trim(), notas: editing?.notas || '', origen: editing?.origen || 'manual'
   };
   const rid = await store.save('refuels', doc);
-  if (!editing) fzQueue(fzEvent('combustible', { ...doc, id: rid }));   // editar un gasto ya enviado: F4
+  const aviso = editing ? fzCambio('combustible', { ...doc, id: rid }) : (fzQueue(fzEvent('combustible', { ...doc, id: rid })), '');
   state.ui.fuel = f;   // el listado de Cargas muestra el combustible recién cargado
   if (modal && modal.el === el) closeModal(true);
-  toast(editing ? 'Carga actualizada.' : 'Carga registrada.', 'ok');
+  toast(aviso || (editing ? 'Carga actualizada.' : 'Carga registrada.'), aviso ? '' : 'ok');
   renderAll();
 }
 
@@ -2117,7 +2148,7 @@ function openExpenseModal(existing, ctx = null) {
       ...recF
     };
     const eid = await store.save('expenses', xdoc);
-    if (!existing) fzQueue(fzEvent('gasto', { ...xdoc, id: eid }));   // editar un gasto ya enviado: F4
+    const aviso = existing ? fzCambio('gasto', { ...xdoc, id: eid }) : (fzQueue(fzEvent('gasto', { ...xdoc, id: eid })), '');
     const patch = {};
     if (next && link) patch.vencimientos = { [link.key]: next };
     if (next && rec && ctx) patch.recurrentes = { [rec.id]: { proximo: next } };   // patente: pagar adelanta el próximo vencimiento
@@ -2128,7 +2159,7 @@ function openExpenseModal(existing, ctx = null) {
       if (fecha > datePart(cur[a.fkey])) patch[a.fkey] = fecha;
     }
     if (Object.keys(patch).length) await store.saveSettings(patch);
-    closeModal(true); toast(existing ? 'Gasto actualizado.' : 'Gasto registrado.', 'ok');
+    closeModal(true); toast(aviso || (existing ? 'Gasto actualizado.' : 'Gasto registrado.'), aviso ? '' : 'ok');
   });
 }
 
@@ -2466,7 +2497,7 @@ const actions = {
   'del-refuel': async el => {
     const r = state.refuels.find(x => x.id === el.dataset.id); if (!r) return;
     if (await confirmDialog({ title: 'Eliminar carga', message: `Se eliminará la carga del ${fmtDate(r.fecha)} (${nf(r.odometro)} km, ${money(r.costoTotal)}).` })) {
-      await store.remove('refuels', r.id); toast('Carga eliminada.');
+      await store.remove('refuels', r.id); fzCambio('combustible', r, true); toast('Carga eliminada.');
     }
   },
   'more-refuels': () => { state.ui.fuelLimit += 20; renderAll(); },
@@ -2476,12 +2507,12 @@ const actions = {
   'edit-expense': el => { const e = state.expenses.find(x => x.id === el.dataset.id); if (e) openExpenseModal(e); },
   'del-expense': async el => {
     const e = state.expenses.find(x => x.id === el.dataset.id); if (!e) return;
-    if (await confirmDialog({ title: 'Eliminar gasto', message: `Se eliminará “${e.tipo}” del ${fmtDate(e.fecha)} (${money(e.monto)}).` })) { await store.remove('expenses', e.id); toast('Gasto eliminado.'); }
+    if (await confirmDialog({ title: 'Eliminar gasto', message: `Se eliminará “${e.tipo}” del ${fmtDate(e.fecha)} (${money(e.monto)}).` })) { await store.remove('expenses', e.id); fzCambio('gasto', e, true); toast('Gasto eliminado.'); }
   },
   'del-group': async el => {
     const g = groupExpenses(state.expenses).find(x => x.key === el.dataset.key); if (!g) return;
     if (await confirmDialog({ title: 'Eliminar evento', message: `Se eliminarán los ${g.items.length} ítems del evento del ${fmtDate(g.fecha)} (${money(g.total)}).` })) {
-      await store.removeMany('expenses', g.items.map(i => i.id)); state.ui.expanded.delete(g.key); toast('Evento eliminado.');
+      await store.removeMany('expenses', g.items.map(i => i.id)); g.items.forEach(i => fzCambio('gasto', i, true)); state.ui.expanded.delete(g.key); toast('Evento eliminado.');
     }
   },
   'toggle-group': el => { const k = el.dataset.key; state.ui.expanded.has(k) ? state.ui.expanded.delete(k) : state.ui.expanded.add(k); renderExpenses(); },
@@ -2556,7 +2587,7 @@ async function boot() {
 
   if (DEMO) {
     store = createMemoryStore();
-    window.__garage = { state, store, derive, ipcFactor, cifrarSobre, b64u, deb64u, fzEvent, fzId, fzQueue, flushOutbox, leerCodigoFG, fzStatus, buildDrivvoPlan, buildJsonPlan, computeAlerts, serviceCounters,
+    window.__garage = { state, store, derive, ipcFactor, cifrarSobre, b64u, deb64u, fzEvent, fzId, fzQueue, fzCambio, flushOutbox, leerCodigoFG, fzStatus, buildDrivvoPlan, buildJsonPlan, computeAlerts, serviceCounters,
       parseCSV, finishPlan, executePlan, showPlanPreview, migrateSettings, SERVICE_ITEMS, DATE_ALERTS, GROUPS, openOnboarding, markReviewed, kmRef, openAlertExpense, lastExpenseFor,
       REC_TIPOS, recurrentesList, recPayments, recCuotas, recStatus, recHistory, migrateSeguro, openRecurrenteModal, openRecPayment, openRecHistory };   // solo para pruebas locales (tests/smoke.mjs)
     enterApp({ uid: 'demo', email: 'demo@local' });
