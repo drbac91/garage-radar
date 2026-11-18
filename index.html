@@ -996,7 +996,8 @@ function fzEvent(kind, d) {
   const amount = kind === 'combustible' ? d.costoTotal : d.monto;
   if (!d.cuenta || !(amount > 0)) return null;   // sin cuenta no se envía; un monto 0 no es un gasto
   const base = { v: 1, origen: 'garage', evento: 'crea', id: fzId(d.id), tipo: kind, fecha: datePart(d.fecha), cuenta: d.cuenta, cuotas: d.cuotas || 1, monto: Number(amount).toFixed(2) };
-  if (kind === 'combustible') return { ...base, categoria: 'Combustible', descripcion: [d.combustible, d.estacion].filter(Boolean).join(' · '), odometro: String(d.odometro), litros: String(d.volumen), combustible: d.combustible };
+  // el tipo de combustible no va en la descripción: en Finanzas ya es la subcategoría (GNC, Nafta)
+  if (kind === 'combustible') return { ...base, categoria: 'Combustible', descripcion: d.estacion || '', odometro: String(d.odometro), litros: String(d.volumen), combustible: d.combustible };
   return { ...base, categoria: (CATS[d.categoria] || CATS.OTROS).short, descripcion: [d.tipo, d.descripcion].filter(Boolean).join(' · ').slice(0, 200), ...(Number.isFinite(d.odometro) ? { odometro: String(d.odometro) } : {}) };
 }
 // Lo ya mandado, por gasto: { rev, monto, cuenta, cuotas } tal como lo recibió Finanzas (F4 lo necesita para corregir y anular).
