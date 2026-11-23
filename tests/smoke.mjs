@@ -278,7 +278,7 @@ async function main() {
         return out;
       }, vec);
       eq(r.vector, true, 'sobre idéntico al vector común de Finanzas');
-      eq(r.ev, { v: 1, origen: 'garage', evento: 'crea', id: 'gr-abc123', tipo: 'gasto', fecha: '2026-11-17', cuenta: 'Mercado Pago', cuotas: 1, monto: '1500.50', categoria: 'Otros', descripcion: 'Peaje' }, 'evento de gasto');
+      eq(r.ev, { v: 1, origen: 'garage', evento: 'crea', id: 'gr-abc123', tipo: 'gasto', fecha: '2026-11-17', cuenta: 'Mercado Pago', cuotas: 1, monto: '1500.50', categoria: 'Peaje', descripcion: '' }, 'evento de gasto');
       eq([r.fuel.litros, r.fuel.combustible, r.fuel.odometro, r.fuel.monto, r.fuel.cuotas], ['13.48', 'GNC', '216188', '9692.12', 3], 'evento de combustible');
       eq([r.sinCuenta, r.idLargo], [null, 64], 'sin cuenta no hay evento; el id se acota a 64');
       eq(r.tras500, [2, 1], '500: se corta y queda todo pendiente');
@@ -312,7 +312,7 @@ async function main() {
       eq(r.sacada, ['', 0, '', 0], 'alta sin enviar: borrar la saca de la cola');
       eq([r.aviso0, r.aviso1 !== ''], ['', true], 'avisa solo si cambia monto/cuenta/cuotas');
       eq(r.cola.map(e => [e.evento, e.gasto, e.rev, e.monto, e.cuenta]), [['corrige', 'gr-abc123', 1, '1500.00', 'Efectivo'], ['corrige', 'gr-abc123', 2, '1500.00', 'Efectivo'], ['anula', 'gr-abc123', 3, undefined, undefined]], 'corrige con lo de Finanzas y anula, rev creciente');
-      eq([r.cola[0].descripcion, new Set(r.cola.map(e => e.id)).size, r.cola.every(e => /^gr-[A-Za-z0-9_-]{22}$/.test(e.id) && e.id !== e.gasto)], ['Peaje · Autopista', 3, true], 'cada evento con id propio');
+      eq([r.cola[0].descripcion, new Set(r.cola.map(e => e.id)).size, r.cola.every(e => /^gr-[A-Za-z0-9_-]{22}$/.test(e.id) && e.id !== e.gasto)], ['Autopista', 3, true], 'cada evento con id propio');
       eq([r.despues, r.nunca], [['', 3], ['', 3]], 'lo anulado o nunca enviado no manda nada');
       eq(errors, [], 'errores de consola');
       await ctx.close();

@@ -998,7 +998,8 @@ function fzEvent(kind, d) {
   const base = { v: 1, origen: 'garage', evento: 'crea', id: fzId(d.id), tipo: kind, fecha: datePart(d.fecha), cuenta: d.cuenta, cuotas: d.cuotas || 1, monto: Number(amount).toFixed(2) };
   // el tipo de combustible no va en la descripción: en Finanzas ya es la subcategoría (GNC, Nafta)
   if (kind === 'combustible') return { ...base, categoria: 'Combustible', descripcion: d.estacion || '', odometro: String(d.odometro), litros: String(d.volumen), combustible: d.combustible };
-  return { ...base, categoria: (CATS[d.categoria] || CATS.OTROS).short, descripcion: [d.tipo, d.descripcion].filter(Boolean).join(' · ').slice(0, 200), ...(Number.isFinite(d.odometro) ? { odometro: String(d.odometro) } : {}) };
+  // la categoría es lo que escribiste en «Tipo» (Lavadero, Peajes…): Finanzas la resuelve por nombre; si no la conoce entra en «A clasificar» con ese texto
+  return { ...base, categoria: String(d.tipo || '').trim().slice(0, 60) || (CATS[d.categoria] || CATS.OTROS).short, descripcion: String(d.descripcion || '').slice(0, 200), ...(Number.isFinite(d.odometro) ? { odometro: String(d.odometro) } : {}) };
 }
 // Lo ya mandado, por gasto: { rev, monto, cuenta, cuotas } tal como lo recibió Finanzas (F4 lo necesita para corregir y anular).
 // shortcut: vive en ESTE dispositivo; editar o borrar desde otro no se propaga. Pasarlo a Firestore si se usan dos.
