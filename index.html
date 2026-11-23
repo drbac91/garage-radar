@@ -1094,7 +1094,7 @@ function fzEntrante(ev, sobreId) {
   return { doc: { id: ev.id, fecha: `${fecha}T12:00:00`, odometro: null, categoria: cat, cuenta: ev.cuenta || '', cuotas: Math.min(72, Math.max(1, Number(ev.cuotas) || 1)),
     tipo: tipo || CATS[cat].short, descripcion: String(ev.descripcion || '').slice(0, 200), monto, local: '', grupoId: null, origen: 'finanzas', ...rec } };
 }
-let fzPulling = false;
+let fzPulling = false, fzResumen = '';
 async function fzPull(fetchFn = fetch) {
   const link = lsGet(FZ_LINK, null);
   if (!link || !store || fzPulling || (DEMO && fetchFn === fetch)) return;
@@ -1102,12 +1102,14 @@ async function fzPull(fetchFn = fetch) {
   try {
     const h = { Authorization: 'Bearer ' + link.token };
     let r;
-    try { r = await fetchFn(link.url + '/api/garage/salida', { headers: h }); } catch (e) { return; }
-    if (!r.ok) { if (r.status === 401) fzError = 'Finanzas no reconoce el código de vinculación (¿se revocó?).'; return; }
-    for (const sobre of await r.json()) {
+    try { r = await fetchFn(link.url + '/api/garage/salida', { headers: h }); } catch (e) { fzResumen = 'No pude leer lo que manda Finanzas (sin conexión).'; return; }
+    if (!r.ok) { fzResumen = r.status === 401 ? 'Finanzas no reconoce el código de vinculación (¿se revocó?).' : `Leer lo de Finanzas: respondió ${r.status}.`; return; }
+    const sobres = await r.json(), cuenta = { guardados: 0, noAbre: 0, descartados: 0 };
+    for (const sobre of sobres) {
       let ev;
-      try { if (sobre.tipo !== 'salida') continue; ev = await descifrarSobre(deb64u(link.k), sobre); } catch (e) { continue; }   // no abre: queda en el buzón
+      try { if (sobre.tipo !== 'salida') continue; ev = await descifrarSobre(deb64u(link.k), sobre); } catch (e) { cuenta.noAbre++; continue; }   // no abre: queda en el buzón
       const x = fzEntrante(ev, sobre.id);
+      if (x) cuenta.guardados++; else cuenta.descartados++;
       if (x && x.doc && !state.expenses.some(e => e.id === x.doc.id)) { await store.save('expenses', x.doc); }
       if (x && x.completar) lsSet(FZ_COMPLETAR, [...lsGet(FZ_COMPLETAR, []).filter(c => c.id !== x.completar.id), x.completar].slice(-100));
       if (x && x.anula) {
@@ -1117,6 +1119,7 @@ async function fzPull(fetchFn = fetch) {
       const d = await fetchFn(link.url + '/api/garage/salida/' + encodeURIComponent(sobre.id), { method: 'DELETE', headers: h }).catch(() => null);
       if (!d || !d.ok) break;
     }
+    fzResumen = sobres.length ? `De Finanzas: ${sobres.length} en el buzón, ${cuenta.guardados} procesados, ${cuenta.noAbre} que no se pueden abrir (clave distinta), ${cuenta.descartados} descartados por inválidos.` : 'De Finanzas: no hay nada nuevo en el buzón.';
     scheduleRender();
   } finally { fzPulling = false; }
 }
@@ -2304,9 +2307,9 @@ function openSettingsModal() {
     const e = fzGuardar(), m = $('#st-fz-msg', el);
     if (e) { m.textContent = e; return; }
     m.textContent = 'Guardada. Enviando…'; await flushOutbox();
-    m.textContent = fzError || `Guardada. Pendientes: ${fzStatus().pend}.`;
+    m.textContent = (fzError || `Guardada. Pendientes: ${fzStatus().pend}.`) + ' ' + fzResumen;
   });
-  $('#st-fz-retry', el).addEventListener('click', async () => { if ($('#st-fz-code', el).value.trim()) { const e = fzGuardar(); if (e) { $('#st-fz-msg', el).textContent = e; return; } } await flushOutbox(); const z = fzStatus(); $('#st-fz-msg', el).textContent = fzError || (z.link ? `Pendientes: ${z.pend}.` : 'Todavía no está vinculada.'); });
+  $('#st-fz-retry', el).addEventListener('click', async () => { if ($('#st-fz-code', el).value.trim()) { const e = fzGuardar(); if (e) { $('#st-fz-msg', el).textContent = e; return; } } await flushOutbox(); const z = fzStatus(); $('#st-fz-msg', el).textContent = (fzError || (z.link ? `Pendientes: ${z.pend}.` : 'Todavía no está vinculada.')) + ' ' + fzResumen; });
   $('#st-fz-unlink', el).addEventListener('click', () => { localStorage.removeItem(FZ_LINK); $('#st-fz-url', el).value = ''; $('#st-fz-msg', el).textContent = 'Desvinculada. Lo pendiente queda en la cola hasta que vincules de nuevo.'; });
   $('#st-form', el).addEventListener('submit', async ev => {
     ev.preventDefault();
