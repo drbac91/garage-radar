@@ -358,6 +358,33 @@ async function main() {
       await ctx.close();
     });
 
+    await test('Visita al taller: varios trabajos de una vez, mismo grupo, contadores y total', async () => {
+      const { ctx, page, errors } = await openDemo(browser, base);
+      await page.evaluate(() => window.__garage.store.saveSettings({ cuentas: ['Efectivo'] }));
+      await settle(page);
+      await goTab(page, 'gastos');
+      await page.locator('[data-action=new-visit]').click();
+      await page.locator('#vs-odo').fill('250000'); await page.locator('#vs-cuenta').selectOption('Efectivo');
+      await page.locator('summary', { hasText: 'Neumáticos' }).click();
+      await page.locator('#vs-c-0').check(); await page.locator('#vs-p-0').fill('20000');   // rotación
+      await page.locator('#vs-c-2').check(); await page.locator('#vs-p-2').fill('15000');   // balanceo
+      await page.locator('#vs-mas').click(); await page.locator('.vs-otro input[name=t]').fill('lavadero'); await page.locator('.vs-otro input[name=p]').fill('5000');
+      assert((await page.locator('#vs-suma').textContent()).includes('40.000'), 'muestra la suma');
+      await page.locator('#vs-total').fill('99999');
+      await page.locator('#vs-form button[type=submit]').click();
+      assert(await page.locator('#vs-error').isVisible(), 'total distinto de la suma debería rechazarse');
+      await page.locator('#vs-total').fill('');
+      await page.locator('#vs-form button[type=submit]').click();
+      await page.locator('#vs-form').waitFor({ state: 'detached' });
+      await settle(page);
+      const r = await page.evaluate(() => { const g = window.__garage, e = g.state.expenses; return { n: e.length, grupos: new Set(e.map(x => x.grupoId)).size, tipos: e.map(x => [x.tipo, x.categoria, x.monto]).sort(), odo: g.state.settings.ultimoRotacionKm, cola: JSON.parse(localStorage.getItem('gr_fz_outbox') || '[]').map(x => x.grupo).sort() }; });
+      eq([r.n, r.grupos, r.odo], [3, 1, 250000], 'tres gastos, un grupo, contador de rotación al odómetro');
+      eq(r.tipos.map(x => x[1]).sort(), ['OTROS', 'PREVENTIVO', 'PREVENTIVO'], 'el trabajo libre toma la categoría sugerida');
+      eq(r.cola, ['OTROS', 'PREVENTIVO', 'PREVENTIVO'], 'cada trabajo viaja a Finanzas como un gasto');
+      eq(errors, [], 'errores de consola');
+      await ctx.close();
+    });
+
     await test('B3 lo que manda Finanzas: se descifra, se guarda con su id y recién después se borra del buzón', async () => {
       const { ctx, page, errors } = await openDemo(browser, base);
       const r = await page.evaluate(async () => {

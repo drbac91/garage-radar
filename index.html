@@ -425,7 +425,7 @@ details.more-info summary{cursor:pointer;color:var(--blue);font-weight:700;font-
     <section class="card rounded-2xl" aria-labelledby="t-exp">
       <div class="card-head">
         <h2 class="card-title" id="t-exp"><span data-icon="wrench"></span>Gastos</h2>
-        <button class="btn btn-primary btn-sm" type="button" data-action="new-expense"><span data-icon="plus" data-size="16"></span>Nuevo gasto</button>
+        <span style="display:flex;gap:8px"><button class="btn btn-ghost btn-sm" type="button" data-action="new-visit">Visita al taller</button><button class="btn btn-primary btn-sm" type="button" data-action="new-expense"><span data-icon="plus" data-size="16"></span>Nuevo gasto</button></span>
       </div>
       <div id="gx-chips" class="chips" role="group" aria-label="Filtrar por categoría"></div>
       <div id="gx-history"></div>
@@ -2162,8 +2162,8 @@ function openExpenseModal(existing, ctx = null) {
         </div>
         <p class="help" style="margin:0">Un pago de dos cuotas juntas cubre 2 períodos. Un ajuste (diferencia de póliza, recargo) suma al gasto pero no paga un período.</p>
       </details>` : ''}
-      <div class="field"><label for="gx-cat">Categoría</label><select id="gx-cat">${CAT_KEYS.map(k => `<option value="${k}" ${(it.categoria || 'PREVENTIVO') === k ? 'selected' : ''}>${esc(CATS[k].label)}</option>`).join('')}</select></div>
       <div class="field"><label for="gx-tipo">Tipo</label><input id="gx-tipo" list="gx-tipos" maxlength="60" enterkeyhint="done" placeholder="Cambio de aceite, Lavadero, VTV…" value="${esc(it.tipo || '')}"><datalist id="gx-tipos">${tipos.map(t => `<option value="${esc(t)}">`).join('')}</datalist><div class="chips" id="gx-sug" hidden aria-label="Sugerencias" style="margin:8px 0 0"></div></div>
+      <div class="field"><label for="gx-cat">Categoría (se completa sola según el tipo)</label><select id="gx-cat">${CAT_KEYS.map(k => `<option value="${k}" ${(it.categoria || 'PREVENTIVO') === k ? 'selected' : ''}>${esc(CATS[k].label)}</option>`).join('')}</select></div>
       <div class="grid-2">
         <div class="field"><label for="gx-fecha">Fecha</label><input id="gx-fecha" type="date" value="${esc(datePart(it.fecha) || todayISO())}" required></div>
         <div class="field"><label for="gx-odo">Odómetro (opcional)</label><input id="gx-odo" class="num" inputmode="numeric" value="${Number.isFinite(it.odometro) ? it.odometro : ''}"></div>
@@ -2273,6 +2273,68 @@ function openExpenseModal(existing, ctx = null) {
     }
     if (Object.keys(patch).length) await store.saveSettings(patch);
     closeModal(true); toast(aviso || (existing ? 'Gasto actualizado.' : 'Gasto registrado.'), aviso ? '' : 'ok');
+  });
+}
+
+/* ---- Visita al taller: varios trabajos de una vez (como la plantilla de Drivvo) ----
+   Cada trabajo tildado es un gasto aparte (mismo grupoId, así la lista los junta y suma), reinicia su contador y viaja a Finanzas
+   como un gasto más. Precio por trabajo, o solo el total del taller (entonces va al primer trabajo y el resto queda en 0). */
+function openVisitModal() {
+  const grupos = [...new Set(SERVICE_ITEMS.map(a => a.grupo))];
+  const el = openModal({ title: 'Visita al taller', focus: '#vs-fecha', body: `
+    <form id="vs-form" class="sheet-body" novalidate autocomplete="off">
+      <div class="grid-2">
+        <div class="field"><label for="vs-fecha">Fecha</label><input id="vs-fecha" type="date" value="${todayISO()}" required></div>
+        <div class="field"><label for="vs-odo">Odómetro</label><input id="vs-odo" class="num" inputmode="numeric"></div>
+      </div>
+      <div class="field"><label for="vs-local">Taller (opcional)</label><input id="vs-local" maxlength="80"></div>
+      ${payFieldsHTML({}, null, 'vs')}
+      <p class="help" style="margin:4px 0">Tildá lo que hicieron y, si querés, el precio de cada uno.</p>
+      ${grupos.map(g => `<details class="more-info"><summary>${esc(g)}</summary><div class="stack" style="margin-top:8px">${SERVICE_ITEMS.map((a, i) => a.grupo !== g ? '' : `
+        <div class="grid-2" style="align-items:center"><label class="check"><input type="checkbox" id="vs-c-${i}"> ${esc(a.label)}</label>
+        <input id="vs-p-${i}" class="num" inputmode="decimal" placeholder="$ precio" aria-label="Precio de ${esc(a.label)}"></div>`).join('')}</div></details>`).join('')}
+      <div class="stack" id="vs-otros"></div>
+      <button class="btn btn-ghost btn-sm" type="button" id="vs-mas">+ Otro trabajo</button>
+      <div class="field"><label for="vs-total">Total del taller (si no ponés precio por trabajo)</label><input id="vs-total" class="num" inputmode="decimal"></div>
+      <p class="help" id="vs-suma" role="status" style="margin:0"></p>
+      <p id="vs-error" class="form-error" role="alert" hidden></p>
+      <div class="sheet-foot"><button class="btn btn-ghost" type="button" data-modal-close>Cancelar</button><button class="btn btn-primary" type="submit">Guardar visita</button></div>
+    </form>` });
+  const otros = () => [...el.querySelectorAll('.vs-otro')].map(r => ({ tipo: $('input[name=t]', r).value.trim(), monto: parseNum($('input[name=p]', r).value) || 0 })).filter(o => o.tipo);
+  const ticks = () => SERVICE_ITEMS.map((a, i) => ({ a, tildado: $('#vs-c-' + i, el).checked, monto: parseNum($('#vs-p-' + i, el).value) || 0 })).filter(x => x.tildado);
+  const suma = () => ticks().reduce((t, x) => t + x.monto, 0) + otros().reduce((t, o) => t + o.monto, 0);
+  const mostrar = () => { $('#vs-suma', el).textContent = suma() > 0 ? `Suma de los trabajos: ${money(suma())}` : ''; };
+  $('#vs-mas', el).addEventListener('click', () => {
+    const r = document.createElement('div'); r.className = 'grid-2 vs-otro';
+    r.innerHTML = '<input name="t" maxlength="60" placeholder="Otro trabajo" aria-label="Otro trabajo"><input name="p" class="num" inputmode="decimal" placeholder="$ precio" aria-label="Precio">';
+    $('#vs-otros', el).append(r); $('input[name=t]', r).focus();
+  });
+  el.addEventListener('input', mostrar);
+  $('#vs-form', el).addEventListener('submit', async ev => {
+    ev.preventDefault();
+    const err = m => { const p = $('#vs-error', el); p.textContent = m; p.hidden = !m; };
+    const fecha = $('#vs-fecha', el).value, odoRaw = $('#vs-odo', el).value.trim(), odo = odoRaw ? parseKm(odoRaw) : null;
+    if (!isValidDate(fecha)) return err('Ingresá una fecha válida.');
+    if (odoRaw && !(odo > 0)) return err('El odómetro debe ser un número mayor a 0.');
+    const pay = readPayFields(el, 'vs'); if (pay.error) return err(pay.error);
+    const lista = [...ticks().map(x => ({ tipo: x.a.label, cat: 'PREVENTIVO', monto: x.monto, a: x.a })),
+      ...otros().map(o => ({ tipo: o.tipo, cat: (sugerirTipo(o.tipo)[0] || { cat: 'REPARACION' }).cat, monto: o.monto }))];
+    if (!lista.length) return err('Tildá al menos un trabajo.');
+    const total = parseNum($('#vs-total', el).value) || 0, sum = lista.reduce((t, x) => t + x.monto, 0);
+    if (total > 0 && sum > 0 && Math.abs(total - sum) > 0.005) return err(`El total (${money(total)}) no coincide con la suma de los trabajos (${money(sum)}): dejá solo uno de los dos.`);
+    if (total > 0 && sum === 0) lista[0].monto = total;
+    const grupoId = 'sv_' + b64u(crypto.getRandomValues(new Uint8Array(9))), local = $('#vs-local', el).value.trim(), patch = {}, cur = state.settings || {};
+    for (const x of lista) {
+      const doc = { fecha: `${fecha}T${nowTime()}`, odometro: odo, categoria: x.cat, cuenta: pay.cuenta, cuotas: 1, tipo: x.tipo, descripcion: '', monto: x.monto, local, grupoId, origen: 'manual' };
+      const id = await store.save('expenses', doc);
+      fzQueue(fzEvent('gasto', { ...doc, id }));
+      if (x.a) {   // los contadores nunca retroceden
+        if (x.a.km && odo > (Number.isFinite(cur[x.a.key]) ? cur[x.a.key] : 0)) patch[x.a.key] = odo;
+        if (fecha > datePart(cur[x.a.fkey])) patch[x.a.fkey] = fecha;
+      }
+    }
+    if (Object.keys(patch).length) await store.saveSettings(patch);
+    closeModal(true); toast(`Visita registrada: ${lista.length} ${lista.length === 1 ? 'trabajo' : 'trabajos'}.`, 'ok');
   });
 }
 
@@ -2637,6 +2699,7 @@ const actions = {
   'set-win': el => { state.ui.win = Number(el.dataset.win); renderAll(); },
   'filter-cat': el => { state.ui.cat = el.dataset.cat; state.ui.gxLimit = 20; renderExpenses(); },
   'new-expense': () => openExpenseModal(null),
+  'new-visit': () => openVisitModal(),
   'edit-expense': el => { const e = state.expenses.find(x => x.id === el.dataset.id); if (e) openExpenseModal(e); },
   'del-expense': async el => {
     const e = state.expenses.find(x => x.id === el.dataset.id); if (!e) return;
@@ -2720,7 +2783,7 @@ async function boot() {
 
   if (DEMO) {
     store = createMemoryStore();
-    window.__garage = { state, store, sugerirTipo, fzPull, fzEntrante, derive, ipcFactor, cifrarSobre, b64u, deb64u, fzEvent, fzId, fzQueue, fzCambio, flushOutbox, leerCodigoFG, fzStatus, buildDrivvoPlan, buildJsonPlan, computeAlerts, serviceCounters,
+    window.__garage = { state, store, sugerirTipo, openVisitModal, fzPull, fzEntrante, derive, ipcFactor, cifrarSobre, b64u, deb64u, fzEvent, fzId, fzQueue, fzCambio, flushOutbox, leerCodigoFG, fzStatus, buildDrivvoPlan, buildJsonPlan, computeAlerts, serviceCounters,
       parseCSV, finishPlan, executePlan, showPlanPreview, migrateSettings, SERVICE_ITEMS, DATE_ALERTS, GROUPS, openOnboarding, markReviewed, kmRef, openAlertExpense, lastExpenseFor,
       REC_TIPOS, recurrentesList, recPayments, recCuotas, recStatus, recHistory, migrateSeguro, openRecurrenteModal, openRecPayment, openRecHistory };   // solo para pruebas locales (tests/smoke.mjs)
     enterApp({ uid: 'demo', email: 'demo@local' });
