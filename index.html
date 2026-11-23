@@ -2200,6 +2200,7 @@ function openSettingsModal() {
         <p class="help">En la Mac: <code>finanzas garage vincular</code>. Pegá acá la dirección del buzón y el código que imprime. Se guardan solo en este dispositivo.</p>
         <div class="field"><label for="st-fz-url">Dirección del buzón (https://…)</label><input id="st-fz-url" inputmode="url" autocapitalize="off" value="${esc((fzStatus().link || {}).url || '')}"></div>
         <div class="field"><label for="st-fz-code">Código de vinculación (FG1.…)</label><input id="st-fz-code" autocapitalize="off" placeholder="${fzStatus().link ? 'Vinculada: pegá otro para cambiarla' : 'FG1.…'}"></div>
+        <button class="btn" type="button" id="st-fz-save" style="margin-bottom:8px">Guardar conexión</button>
         <div class="grid-2"><button class="btn btn-ghost" type="button" id="st-fz-retry">Reintentar envío</button><button class="btn btn-ghost" type="button" id="st-fz-unlink">Desvincular</button></div>
         <p class="help" id="st-fz-msg" role="status">${esc(fzError)}</p>
       </details>
@@ -2228,7 +2229,23 @@ function openSettingsModal() {
     if (!n) return toast('No hay datos nuevos en el historial para completar.', 'ok');
     await store.saveSettings(patch); closeModal(true); toast(`Contadores actualizados desde el historial (${n} valores).`, 'ok');
   });
-  $('#st-fz-retry', el).addEventListener('click', async () => { await flushOutbox(); const z = fzStatus(); $('#st-fz-msg', el).textContent = fzError || (z.link ? `Pendientes: ${z.pend}.` : 'Todavía no está vinculada.'); });
+  // Guarda dirección + código al instante (sin tener que llegar al botón del final del formulario). Devuelve un error o ''.
+  const fzGuardar = () => {
+    const codeRaw = $('#st-fz-code', el).value.trim(), urlRaw = $('#st-fz-url', el).value.trim().replace(/\/+$/, ''), cur = fzStatus().link;
+    const code = codeRaw ? leerCodigoFG(codeRaw) : cur;
+    if (codeRaw && !code) return 'El código de vinculación no es válido (empieza con FG1.).';
+    if (!/^https:\/\/[^/\s]+$/.test(urlRaw)) return 'La dirección del buzón tiene que ser https://… sin ruta.';
+    if (!code) return 'Pegá el código de vinculación.';
+    lsSet(FZ_LINK, { url: urlRaw, k: code.k, token: code.token }); $('#st-fz-code', el).value = '';
+    return '';
+  };
+  $('#st-fz-save', el).addEventListener('click', async () => {
+    const e = fzGuardar(), m = $('#st-fz-msg', el);
+    if (e) { m.textContent = e; return; }
+    m.textContent = 'Guardada. Enviando…'; await flushOutbox();
+    m.textContent = fzError || `Guardada. Pendientes: ${fzStatus().pend}.`;
+  });
+  $('#st-fz-retry', el).addEventListener('click', async () => { if ($('#st-fz-code', el).value.trim()) { const e = fzGuardar(); if (e) { $('#st-fz-msg', el).textContent = e; return; } } await flushOutbox(); const z = fzStatus(); $('#st-fz-msg', el).textContent = fzError || (z.link ? `Pendientes: ${z.pend}.` : 'Todavía no está vinculada.'); });
   $('#st-fz-unlink', el).addEventListener('click', () => { localStorage.removeItem(FZ_LINK); $('#st-fz-url', el).value = ''; $('#st-fz-msg', el).textContent = 'Desvinculada. Lo pendiente queda en la cola hasta que vincules de nuevo.'; });
   $('#st-form', el).addEventListener('submit', async ev => {
     ev.preventDefault();
