@@ -2302,7 +2302,10 @@ function openSettingsModal() {
     lsSet(FZ_LINK, { url: urlRaw, k: code.k, token: code.token }); $('#st-fz-code', el).value = '';
     return '';
   };
-  $('#st-fz-compl', el)?.addEventListener('click', () => { lsSet('gr_fz_completar', []); renderAll(); });
+  $('#st-fz-compl', el)?.addEventListener('click', ev => {
+    lsSet('gr_fz_completar', []); ev.currentTarget.closest('p').remove();   // el formulario abierto no se repinta solo
+    const sm = $('#st-fz summary', el); if (sm) sm.textContent = sm.textContent.replace(/ · \d+ cargas por completar/, '');
+  });
   $('#st-fz-save', el).addEventListener('click', async () => {
     const e = fzGuardar(), m = $('#st-fz-msg', el);
     if (e) { m.textContent = e; return; }
