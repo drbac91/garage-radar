@@ -318,6 +318,38 @@ async function main() {
       await ctx.close();
     });
 
+    await test('B3 lo que manda Finanzas: se descifra, se guarda con su id y recién después se borra del buzón', async () => {
+      const { ctx, page, errors } = await openDemo(browser, base);
+      const r = await page.evaluate(async () => {
+        const g = window.__garage, out = {}, kb = new Uint8Array(32).fill(7), k = g.b64u(kb), token = 'T'.repeat(40);
+        localStorage.setItem('gr_fz_link', JSON.stringify({ url: 'https://buzon.example', k, token }));
+        const base = { v: 1, origen: 'finanzas', evento: 'crea', tipo: 'gasto', fecha: '2026-11-20', monto: '4500,50', cuenta: 'Visa', cuotas: 1, categoria: 'Lavadero', categoria_vehiculo: 'LAVADERO', descripcion: 'Lavado' };
+        const evs = [{ ...base, id: 'fz-mov1' }, { ...base, id: 'fz-mov2', tipo: 'combustible', combustible: 'GNC', categoria_vehiculo: undefined }, { ...base, id: 'fz-mov3', categoria_vehiculo: 'PEAJES' },
+          { v: 1, origen: 'finanzas', evento: 'anula', id: 'fz-mov3-r1', gasto: 'fz-mov3', rev: 1 }, { ...base, id: 'fz-mov4', origen: 'garage' }];
+        const sobres = []; for (const e of evs) sobres.push(await g.cifrarSobre(kb, 'salida', new TextEncoder().encode(JSON.stringify(e)), e.id));
+        sobres.push({ ...(await g.cifrarSobre(new Uint8Array(32).fill(9), 'salida', new TextEncoder().encode('{}'), 'fz-mala')) });   // otra clave: no abre, queda
+        const borrados = []; let caer = false;
+        const fake = async (url, o = {}) => {
+          if (o.method === 'DELETE') { if (caer) throw new Error('sin red'); borrados.push(decodeURIComponent(url.split('/').pop())); return { ok: true, status: 200 }; }
+          return { ok: o.headers.Authorization === 'Bearer ' + token, status: 200, json: async () => sobres };
+        };
+        await g.fzPull(fake);
+        await new Promise(r => setTimeout(r, 50));
+        out.gastos = g.state.expenses.filter(e => e.origen === 'finanzas').map(e => [e.id, e.categoria, e.tipo, e.monto, e.cuenta, e.fecha]);
+        out.compl = g.fzStatus().compl.map(c => [c.id, c.combustible]);
+        out.borrados = borrados;
+        borrados.length = 0; await g.fzPull(fake);   // segunda pasada: nada se duplica
+        out.dup = g.state.expenses.filter(e => e.origen === 'finanzas').length;
+        return out;
+      });
+      eq(r.gastos, [['fz-mov1', 'OTROS', 'Lavadero', 4500.5, 'Visa', '2026-11-20T12:00:00']], 'el lavadero entra como Otros/Lavadero con su id; el peaje anulado no queda');
+      eq(r.compl, [['fz-mov2', 'GNC']], 'el combustible queda por completar');
+      eq(r.borrados, ['fz-mov1', 'fz-mov2', 'fz-mov3', 'fz-mov3-r1', 'fz-mov4'], 'se borran los guardados y los inválidos; el que no abre queda en el buzón');
+      eq(r.dup, 1, 'no se duplica');
+      eq(errors, [], 'errores de consola');
+      await ctx.close();
+    });
+
     await test('import de respaldo JSON aplica ajustes y conteo de alertas', async () => {
       const { ctx, page, errors } = await openDemo(browser, base);
       const res = await page.evaluate(async t => {

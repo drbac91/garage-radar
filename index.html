@@ -1036,7 +1036,7 @@ function fzCambio(kind, d, borrar = false) {
   return nuevo !== prev.monto || (d.cuenta || null) !== prev.cuenta || (d.cuotas || 1) !== prev.cuotas
     ? 'Monto, cuenta y cuotas no se cambian desde acá: corregilos también en Finanzas.' : '';
 }
-const fzStatus = () => ({ link: lsGet(FZ_LINK, null), pend: lsGet(FZ_OUT, []).length, bad: lsGet(FZ_BAD, []) });
+const fzStatus = () => ({ link: lsGet(FZ_LINK, null), pend: lsGet(FZ_OUT, []).length, bad: lsGet(FZ_BAD, []), compl: lsGet('gr_fz_completar', []) });
 let fzBusy = false, fzError = '';
 // Manda la cola en orden. Reintenta solo lo transitorio (sin red, 5xx, 401, 507); un rechazo definitivo (400/403/409/413)
 // sale de la cola y queda en «rechazados» con su motivo. El id del evento hace seguro reenviar.
@@ -1060,6 +1060,64 @@ async function flushOutbox(fetchFn = fetch) {
       break;
     }
   } finally { fzBusy = false; }
+  await fzPull(fetchFn);
+}
+
+/* ===================== LO QUE FINANZAS MANDA A GARAGE (B3) =====================
+   GET /api/garage/salida → sobres «salida» (ids fz-…) cifrados con la misma K_garage. Se descifra, se valida y se GUARDA;
+   recién entonces se borra del buzón (si se cae antes, reintenta y el id fz-… evita duplicar: el gasto se guarda con ese id).
+   Solo `crea` y `anula` de gastos: Finanzas hoy no emite otra cosa (sus ediciones no se reenvían). Un gasto de Finanzas se
+   guarda con id = su id (`fz-mov12`) y origen 'finanzas'. Un combustible no se guarda: le faltan odómetro y litros, que solo
+   Garage sabe; queda en la lista «por completar» hasta que cargues esa carga a mano.
+   shortcut: sin reintento de lo que no descifra (queda en el buzón: suele ser una clave rotada); sin `corrige` desde Finanzas. */
+const FZ_COMPLETAR = 'gr_fz_completar';
+const FZ_CATS = { PREVENTIVO: ['PREVENTIVO', ''], REPARACION: ['REPARACION', ''], TRAMITES: ['TRAMITES', ''], OTROS: ['OTROS', ''],
+  PEAJES: ['OTROS', 'Peajes'], ESTACIONAMIENTO: ['OTROS', 'Estacionamiento'], LAVADERO: ['OTROS', 'Lavadero'] };   // Garage no tiene esas tres categorías
+async function descifrarSobre(k, sobre) {
+  const key = await crypto.subtle.importKey('raw', k, 'AES-GCM', false, ['decrypt']);
+  const claro = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: deb64u(sobre.iv), additionalData: new TextEncoder().encode(`finanzas/v1|${sobre.tipo}|${sobre.id || ''}`) }, key, deb64u(sobre.datos));
+  return JSON.parse(new TextDecoder().decode(claro));
+}
+// Devuelve el gasto a guardar, {completar} para un combustible, {anula: id} o null si el evento no es válido (se descarta).
+function fzEntrante(ev, sobreId) {
+  if (!ev || ev.v !== 1 || ev.origen !== 'finanzas' || ev.id !== sobreId || !/^fz-[A-Za-z0-9_-]{3,61}$/.test(ev.id)) return null;
+  if (ev.evento === 'anula') return /^fz-[A-Za-z0-9_-]{3,61}$/.test(ev.gasto || '') ? { anula: ev.gasto } : null;
+  if (ev.evento && ev.evento !== 'crea') return null;
+  const monto = Number(String(ev.monto).replace(',', '.')), fecha = String(ev.fecha || '');
+  if (!(monto > 0) || !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return null;
+  if (ev.tipo === 'combustible') return { completar: { id: ev.id, fecha, monto, cuenta: ev.cuenta || '', combustible: ev.combustible || '' } };
+  if (ev.tipo !== 'gasto' || !FZ_CATS[ev.categoria_vehiculo]) return null;
+  const [cat, tipo] = FZ_CATS[ev.categoria_vehiculo];
+  const rec = ev.recurrente && REC_TIPOS[ev.recurrente] && recById(ev.recurrente) && /^\d{4}-\d{2}$/.test(ev.periodo || '')
+    ? { recurrenteId: ev.recurrente, periodo: ev.periodo, cubre: 1, clase: 'cuota' } : {};
+  return { doc: { id: ev.id, fecha: `${fecha}T12:00:00`, odometro: null, categoria: cat, cuenta: ev.cuenta || '', cuotas: Math.min(72, Math.max(1, Number(ev.cuotas) || 1)),
+    tipo: tipo || CATS[cat].short, descripcion: String(ev.descripcion || '').slice(0, 200), monto, local: '', grupoId: null, origen: 'finanzas', ...rec } };
+}
+let fzPulling = false;
+async function fzPull(fetchFn = fetch) {
+  const link = lsGet(FZ_LINK, null);
+  if (!link || !store || fzPulling || (DEMO && fetchFn === fetch)) return;
+  fzPulling = true;
+  try {
+    const h = { Authorization: 'Bearer ' + link.token };
+    let r;
+    try { r = await fetchFn(link.url + '/api/garage/salida', { headers: h }); } catch (e) { return; }
+    if (!r.ok) { if (r.status === 401) fzError = 'Finanzas no reconoce el código de vinculación (¿se revocó?).'; return; }
+    for (const sobre of await r.json()) {
+      let ev;
+      try { if (sobre.tipo !== 'salida') continue; ev = await descifrarSobre(deb64u(link.k), sobre); } catch (e) { continue; }   // no abre: queda en el buzón
+      const x = fzEntrante(ev, sobre.id);
+      if (x && x.doc && !state.expenses.some(e => e.id === x.doc.id)) { await store.save('expenses', x.doc); }
+      if (x && x.completar) lsSet(FZ_COMPLETAR, [...lsGet(FZ_COMPLETAR, []).filter(c => c.id !== x.completar.id), x.completar].slice(-100));
+      if (x && x.anula) {
+        if (state.expenses.some(e => e.id === x.anula && e.origen === 'finanzas')) await store.remove('expenses', x.anula);
+        lsSet(FZ_COMPLETAR, lsGet(FZ_COMPLETAR, []).filter(c => c.id !== x.anula));
+      }
+      const d = await fetchFn(link.url + '/api/garage/salida/' + encodeURIComponent(sobre.id), { method: 'DELETE', headers: h }).catch(() => null);
+      if (!d || !d.ok) break;
+    }
+    scheduleRender();
+  } finally { fzPulling = false; }
 }
 
 // Factor para llevar pesos del mes `desde` a pesos del mes `hasta` (AAAA-MM): producto de (1 + IPC/100) de los meses
@@ -2196,13 +2254,14 @@ function openSettingsModal() {
         <div class="field"><label for="st-anio">Año</label><input id="st-anio" inputmode="numeric" value="${Number.isFinite(v.anio) ? v.anio : ''}"></div>
         <div class="field"><label for="st-tanque">Tanque (L)</label><input id="st-tanque" inputmode="decimal" value="${Number.isFinite(v.tanque) ? String(v.tanque).replace('.', ',') : ''}"></div>
       </div>
-      <details class="more-info" id="st-fz"><summary>Conexión con Finanzas${(() => { const z = fzStatus(); return z.link ? ` · vinculada${z.pend ? ` · ${z.pend} sin enviar` : ''}${z.bad.length ? ` · ${z.bad.length} rechazados` : ''}` : ' · sin vincular'; })()}</summary>
+      <details class="more-info" id="st-fz"><summary>Conexión con Finanzas${(() => { const z = fzStatus(); return z.link ? ` · vinculada${z.pend ? ` · ${z.pend} sin enviar` : ''}${z.bad.length ? ` · ${z.bad.length} rechazados` : ''}${z.compl.length ? ` · ${z.compl.length} cargas por completar` : ''}` : ' · sin vincular'; })()}</summary>
         <p class="help">En la Mac: <code>finanzas garage vincular</code>. Pegá acá la dirección del buzón y el código que imprime. Se guardan solo en este dispositivo.</p>
         <div class="field"><label for="st-fz-url">Dirección del buzón (https://…)</label><input id="st-fz-url" inputmode="url" autocapitalize="off" value="${esc((fzStatus().link || {}).url || '')}"></div>
         <div class="field"><label for="st-fz-code">Código de vinculación (FG1.…)</label><input id="st-fz-code" autocapitalize="off" placeholder="${fzStatus().link ? 'Vinculada: pegá otro para cambiarla' : 'FG1.…'}"></div>
         <button class="btn" type="button" id="st-fz-save" style="margin-bottom:8px">Guardar conexión</button>
         <div class="grid-2"><button class="btn btn-ghost" type="button" id="st-fz-retry">Reintentar envío</button><button class="btn btn-ghost" type="button" id="st-fz-unlink">Desvincular</button></div>
         <p class="help" id="st-fz-msg" role="status">${esc(fzError)}</p>
+        ${fzStatus().compl.length ? `<p class="help">Cargas de combustible que registraste en Finanzas (falta el odómetro y los litros; cargalas en Cargas): ${esc(fzStatus().compl.map(c => `${c.fecha} ${c.combustible || ''} $${c.monto}`).join(' · '))} <button class="btn btn-ghost" type="button" id="st-fz-compl">Ya las cargué</button></p>` : ''}
       </details>
       <div class="field"><label for="st-cuentas">Cuentas de Finanzas (una por línea)</label><textarea id="st-cuentas" rows="4" maxlength="2000" placeholder="Mercado Pago&#10;Visa Galicia&#10;Efectivo">${esc(cuentasList(s).join('\n'))}</textarea>
         <span class="help" style="margin:0">Escribilas igual que en Finanzas: así se reconocen al enviar los gastos.</span></div>
@@ -2239,6 +2298,7 @@ function openSettingsModal() {
     lsSet(FZ_LINK, { url: urlRaw, k: code.k, token: code.token }); $('#st-fz-code', el).value = '';
     return '';
   };
+  $('#st-fz-compl', el)?.addEventListener('click', () => { lsSet('gr_fz_completar', []); renderAll(); });
   $('#st-fz-save', el).addEventListener('click', async () => {
     const e = fzGuardar(), m = $('#st-fz-msg', el);
     if (e) { m.textContent = e; return; }
@@ -2605,7 +2665,7 @@ async function boot() {
 
   if (DEMO) {
     store = createMemoryStore();
-    window.__garage = { state, store, derive, ipcFactor, cifrarSobre, b64u, deb64u, fzEvent, fzId, fzQueue, fzCambio, flushOutbox, leerCodigoFG, fzStatus, buildDrivvoPlan, buildJsonPlan, computeAlerts, serviceCounters,
+    window.__garage = { state, store, fzPull, fzEntrante, derive, ipcFactor, cifrarSobre, b64u, deb64u, fzEvent, fzId, fzQueue, fzCambio, flushOutbox, leerCodigoFG, fzStatus, buildDrivvoPlan, buildJsonPlan, computeAlerts, serviceCounters,
       parseCSV, finishPlan, executePlan, showPlanPreview, migrateSettings, SERVICE_ITEMS, DATE_ALERTS, GROUPS, openOnboarding, markReviewed, kmRef, openAlertExpense, lastExpenseFor,
       REC_TIPOS, recurrentesList, recPayments, recCuotas, recStatus, recHistory, migrateSeguro, openRecurrenteModal, openRecPayment, openRecHistory };   // solo para pruebas locales (tests/smoke.mjs)
     enterApp({ uid: 'demo', email: 'demo@local' });
