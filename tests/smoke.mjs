@@ -230,11 +230,12 @@ async function main() {
       await page.locator('#gx-form button[type=submit]').click();
       assert(await page.locator('#gx-error').isVisible(), 'sin cuenta debería mostrar un error');
       eq(await page.evaluate(() => window.__garage.state.expenses.length), 0, 'no se guardó sin cuenta');
-      await page.locator('#gx-cuenta').selectOption('Visa'); await page.locator('#gx-cuotas').fill('3');
+      await page.locator('#gx-cuenta').selectOption('Visa'); 
+      eq(await page.locator('#gx-cuotas').count(), 0, 'no hay campo de cuotas: vienen con el resumen');
       await page.locator('#gx-form button[type=submit]').click();
       await page.locator('#gx-form').waitFor({ state: 'detached' });
       await settle(page);
-      eq(await page.evaluate(() => window.__garage.state.expenses.map(e => [e.cuenta, e.cuotas])), [['Visa', 3]], 'cuenta y cuotas guardadas');
+      eq(await page.evaluate(() => window.__garage.state.expenses.map(e => [e.cuenta, e.cuotas])), [['Visa', 1]], 'cuenta guardada, cuotas siempre 1');
       // El siguiente gasto propone la última cuenta usada; «Sin cuenta» se guarda como null.
       await page.locator('[data-action=new-expense]').click();
       eq(await page.locator('#gx-cuenta').inputValue(), 'Visa', 'propone la última cuenta usada');
@@ -243,11 +244,6 @@ async function main() {
       await page.locator('#gx-form').waitFor({ state: 'detached' });
       await settle(page);
       eq(await page.evaluate(() => window.__garage.state.expenses.map(e => String(e.cuenta)).sort()), ['Visa', 'null'], 'sin cuenta queda en null');
-      // Cuotas inválidas.
-      await page.locator('[data-action=new-expense]').click();
-      await page.locator('#gx-monto').fill('10'); await page.locator('#gx-cuotas').fill('0');
-      await page.locator('#gx-form button[type=submit]').click();
-      assert(await page.locator('#gx-error').isVisible(), 'cuotas 0 debería rechazarse');
       eq(errors, [], 'errores de consola');
       await ctx.close();
     });
@@ -278,7 +274,7 @@ async function main() {
         return out;
       }, vec);
       eq(r.vector, true, 'sobre idéntico al vector común de Finanzas');
-      eq(r.ev, { v: 1, origen: 'garage', evento: 'crea', id: 'gr-abc123', tipo: 'gasto', fecha: '2026-11-17', cuenta: 'Mercado Pago', cuotas: 1, monto: '1500.50', categoria: 'Peaje', descripcion: '' }, 'evento de gasto');
+      eq(r.ev, { v: 1, origen: 'garage', evento: 'crea', id: 'gr-abc123', tipo: 'gasto', fecha: '2026-11-17', cuenta: 'Mercado Pago', cuotas: 1, monto: '1500.50', categoria: 'Peaje', grupo: 'OTROS', descripcion: '' }, 'evento de gasto');
       eq([r.fuel.litros, r.fuel.combustible, r.fuel.odometro, r.fuel.monto, r.fuel.cuotas], ['13.48', 'GNC', '216188', '9692.12', 3], 'evento de combustible');
       eq([r.sinCuenta, r.idLargo], [null, 64], 'sin cuenta no hay evento; el id se acota a 64');
       eq(r.tras500, [2, 1], '500: se corta y queda todo pendiente');
@@ -314,6 +310,50 @@ async function main() {
       eq(r.cola.map(e => [e.evento, e.gasto, e.rev, e.monto, e.cuenta]), [['corrige', 'gr-abc123', 1, '1500.00', 'Efectivo'], ['corrige', 'gr-abc123', 2, '1500.00', 'Efectivo'], ['anula', 'gr-abc123', 3, undefined, undefined]], 'corrige con lo de Finanzas y anula, rev creciente');
       eq([r.cola[0].descripcion, new Set(r.cola.map(e => e.id)).size, r.cola.every(e => /^gr-[A-Za-z0-9_-]{22}$/.test(e.id) && e.id !== e.gasto)], ['Autopista', 3, true], 'cada evento con id propio');
       eq([r.despues, r.nunca], [['', 3], ['', 3]], 'lo anulado o nunca enviado no manda nada');
+      eq(errors, [], 'errores de consola');
+      await ctx.close();
+    });
+
+    await test('Usuarios sintéticos: lo que escriben en «Tipo» sugiere el concepto y la categoría correctos', async () => {
+      const { ctx, page, errors } = await openDemo(browser, base);
+      const casos = [   // [lo que escribe un usuario real o descuidado, categoría esperada, texto que debe figurar entre las sugerencias]
+        ['Controlé la presión de los neumáticos', 'PREVENTIVO', 'Presión'], ['presion', 'PREVENTIVO', 'Presión'], ['PRESIÓN GOMAS', 'PREVENTIVO', 'Presión'],
+        ['cambio de aceite', 'PREVENTIVO', 'Aceite'], ['Alineacion y balanceo', 'PREVENTIVO', 'Alineación'], ['rotacion', 'PREVENTIVO', 'Rotación'],
+        ['lavadero', 'OTROS', 'Lavadero'], ['Lavado y encerado', 'OTROS', 'Lavadero'], ['peaje', 'OTROS', 'Peaje'], ['Autopista Bs As-La Plata', 'OTROS', 'Peaje'],
+        ['cochera', 'OTROS', 'Estacionamiento'], ['estacionamiento', 'OTROS', 'Estacionamiento'], ['grua', 'OTROS', 'Grúa'],
+        ['multa', 'TRAMITES', 'Multa'], ['vtv', 'TRAMITES', 'VTV'], ['Seguro del auto', 'TRAMITES', 'Seguro'], ['patente cuota 11', 'TRAMITES', 'Patente'],
+        ['taller', 'REPARACION', 'Taller'], ['gomeria pinchadura', 'REPARACION', 'Cubierta'], ['repuesto espejo', 'REPARACION', 'Repuesto'],
+        ['pastillas de freno', 'PREVENTIVO', 'Pastillas'], ['bateria', 'PREVENTIVO', 'Batería'], ['escobillas', 'PREVENTIVO', 'Escobillas']];
+      const r = await page.evaluate(casos => casos.map(([t]) => { const s = window.__garage.sugerirTipo(t); return [t, s[0] && s[0].cat, s.map(x => x.label).join('|')]; }), casos);
+      const fallos = r.filter((x, i) => x[1] !== casos[i][1] || !x[2].includes(casos[i][2]));
+      eq(fallos, [], 'cada frase sugiere su concepto y su categoría');
+      const vacio = await page.evaluate(() => [window.__garage.sugerirTipo('xy'), window.__garage.sugerirTipo('zzzzqq'), window.__garage.sugerirTipo('')].map(a => a.length));
+      eq(vacio, [0, 0, 0], 'texto corto o desconocido: sin sugerencias (no inventa)');
+      eq(errors, [], 'errores de consola');
+      await ctx.close();
+    });
+
+    await test('Pantalla: el Tipo sugiere y ajusta la categoría; las marcas de combustible son botones', async () => {
+      const { ctx, page, errors } = await openDemo(browser, base);
+      await goTab(page, 'gastos');
+      await page.locator('[data-action=new-expense]').click();
+      await page.locator('#gx-tipo').fill('lavadero');
+      eq(await page.locator('#gx-cat').inputValue(), 'OTROS', 'lavadero pasa la categoría a Otros sin tocarla');
+      await page.locator('#gx-tipo').fill('Controlé la presión');
+      eq([await page.locator('#gx-cat').inputValue(), await page.locator('#gx-sug .chip').first().textContent()].map(x => x.slice(0, 7)), ['PREVENT', 'Presión'], 'presión: preventivo y chip sugerido');
+      await page.locator('#gx-sug .chip').first().click();
+      assert((await page.locator('#gx-tipo').inputValue()).startsWith('Presión'), 'el chip completa el Tipo');
+      eq(await page.locator('[data-reset=presion]').isVisible(), true, 'aparece el contador de presión');
+      await page.locator('#gx-cat').selectOption('REPARACION'); await page.locator('#gx-tipo').fill('peaje');
+      eq(await page.locator('#gx-cat').inputValue(), 'REPARACION', 'si elegiste la categoría a mano no se pisa');
+      await page.keyboard.press('Escape');
+      await goTab(page, 'cargas');
+      await page.locator('[data-action=new-refuel]').click();
+      await page.locator('[data-marca=Shell]').click();
+      eq([await page.locator('#fl-estacion').inputValue(), await page.locator('[data-marca=Shell]').getAttribute('aria-pressed')], ['Shell', 'true'], 'marca por botón');
+      await page.locator('[data-marca=Otra]').click();
+      await page.locator('#fl-estacion').fill('Bandera blanca Ruta 5');
+      eq(await page.locator('[data-marca=Otra]').getAttribute('aria-pressed'), 'true', '«Otra» queda marcada con texto libre');
       eq(errors, [], 'errores de consola');
       await ctx.close();
     });

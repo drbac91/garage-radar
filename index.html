@@ -999,7 +999,7 @@ function fzEvent(kind, d) {
   // el tipo de combustible no va en la descripción: en Finanzas ya es la subcategoría (GNC, Nafta)
   if (kind === 'combustible') return { ...base, categoria: 'Combustible', descripcion: d.estacion || '', odometro: String(d.odometro), litros: String(d.volumen), combustible: d.combustible };
   // la categoría es lo que escribiste en «Tipo» (Lavadero, Peajes…): Finanzas la resuelve por nombre; si no la conoce entra en «A clasificar» con ese texto
-  return { ...base, categoria: String(d.tipo || '').trim().slice(0, 60) || (CATS[d.categoria] || CATS.OTROS).short, descripcion: String(d.descripcion || '').slice(0, 200), ...(Number.isFinite(d.odometro) ? { odometro: String(d.odometro) } : {}) };
+  return { ...base, categoria: String(d.tipo || '').trim().slice(0, 60) || (CATS[d.categoria] || CATS.OTROS).short, grupo: CATS[d.categoria] ? d.categoria : 'OTROS', descripcion: String(d.descripcion || '').slice(0, 200), ...(Number.isFinite(d.odometro) ? { odometro: String(d.odometro) } : {}) };
 }
 // Lo ya mandado, por gasto: { rev, monto, cuenta, cuotas } tal como lo recibió Finanzas (F4 lo necesita para corregir y anular).
 // shortcut: vive en ESTE dispositivo; editar o borrar desde otro no se propaga. Pasarlo a Firestore si se usan dos.
@@ -1469,6 +1469,35 @@ function finishPlan(plan) {
 
 // Contadores de cada service periódico a partir del historial de gastos: último odómetro y última fecha por ítem.
 // Solo avanzan: nunca pisan un valor más reciente ya guardado en `cur`. Se apoya en el tipo, no en la categoría guardada.
+/* ---- Sugerencias al escribir el Tipo de un gasto ----
+   Una sola lista de conceptos (además de los services de SERVICE_ITEMS, que son siempre PREVENTIVO): cada uno sabe su
+   categoría de Garage. Finanzas decide dónde cae en su árbol a partir de esa categoría (finanzas/garage.py, DESTINO). */
+const CONCEPTOS = [
+  { label: 'Lavadero', cat: 'OTROS', re: /lavad|lavado|encerad|pulido/ },
+  { label: 'Peaje', cat: 'OTROS', re: /peaje|telepase|autopista/ },
+  { label: 'Estacionamiento', cat: 'OTROS', re: /estacionamiento|cochera|parquimetro|playa de est/ },
+  { label: 'Grúa', cat: 'OTROS', re: /grua|remolque|auxilio mecanico/ },
+  { label: 'Accesorios', cat: 'OTROS', re: /accesorio|alfombra|funda|cargador|soporte/ },
+  { label: 'Multa', cat: 'TRAMITES', re: /multa|infraccion|acta de/ },
+  { label: 'VTV', cat: 'TRAMITES', re: /vtv|verificacion tecnica/ },
+  { label: 'Seguro', cat: 'TRAMITES', re: /seguro|poliza/ },
+  { label: 'Patente', cat: 'TRAMITES', re: /patente|impuesto automotor/ },
+  { label: 'Licencia de conducir', cat: 'TRAMITES', re: /licencia|registro de conducir/ },
+  { label: 'Taller / mecánico', cat: 'REPARACION', re: /taller|mecanico|chapa|pintura|reparacion|arreglo/ },
+  { label: 'Cubierta nueva', cat: 'REPARACION', re: /cubierta|neumatico nuevo|llanta|gomeria|pinchadura|parche/ },
+  { label: 'Repuesto', cat: 'REPARACION', re: /repuesto|pieza|lampara|espejo|parabrisas|cristal/ }
+];
+// Hasta 4 conceptos que encajan con lo escrito: por palabra clave o porque el texto es parte del nombre (3+ letras).
+function sugerirTipo(texto) {
+  const q = norm(texto);
+  if (q.length < 3) return [];
+  const out = [], vistos = new Set();
+  const add = (label, cat) => { if (!vistos.has(label) && out.length < 4) { vistos.add(label); out.push({ label, cat }); } };
+  for (const c of CONCEPTOS) if (c.re.test(q) || norm(c.label).includes(q)) add(c.label, c.cat);
+  for (const a of SERVICE_ITEMS) if (a.match({ tipo: texto }) || norm(a.label).includes(q)) add(a.label, 'PREVENTIVO');
+  return out;
+}
+
 function serviceCounters(expenses, cur) {
   const patch = {};
   for (const a of SERVICE_ITEMS) {
@@ -2007,7 +2036,7 @@ function openRefuelModal(existing) {
         <label for="fl-grado">Grado de nafta</label>
         <select id="fl-grado"><option value="Nafta">Nafta</option><option value="Nafta Super">Nafta Super</option><option value="Nafta Premium">Nafta Premium</option></select>
       </div>
-      <div class="field"><label for="fl-estacion">Estación (opcional)</label><input id="fl-estacion" maxlength="80" enterkeyhint="done"></div>
+      <div class="field"><label for="fl-estacion">Estación (opcional)</label><div class="chips" id="fl-marcas" style="margin:0 0 8px">${['YPF', 'Shell', 'Puma', 'Axion', 'Gulf', 'Otra'].map(m => `<button type="button" class="chip" data-marca="${m}" aria-pressed="false">${m}</button>`).join('')}</div><input id="fl-estacion" maxlength="80" enterkeyhint="done" placeholder="Marca o nombre (bandera blanca: Otra)"></div>
       <button type="button" class="switch" id="fl-lleno" role="switch" aria-checked="true" data-action="toggle-lleno"><span class="track"></span><span>¿Tanque lleno?</span></button>
       <p id="fl-warn" class="form-warn" role="status" hidden></p>
       <p id="fl-error" class="form-error" role="alert" hidden></p>
@@ -2024,6 +2053,14 @@ function openRefuelModal(existing) {
   const form = $('#fl-form', el);
   Object.keys(FL).forEach(k => $(FL[k], el).addEventListener('input', () => recalcRefuel(k)));
   $('#fl-odo', el).addEventListener('input', () => { state.ui.flArmed = null; $('#fl-warn', el).hidden = true; });
+  // Marcas habituales como botones; «Otra» deja escribir el nombre (bandera blanca). Lo escrito a mano también marca la marca.
+  const marcarMarca = () => { const v = norm($('#fl-estacion', el).value); el.querySelectorAll('[data-marca]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.marca !== 'Otra' ? norm(b.dataset.marca) === v : v !== '' && !['ypf', 'shell', 'puma', 'axion', 'gulf'].includes(v)))); };
+  el.querySelectorAll('[data-marca]').forEach(b => b.addEventListener('click', () => {
+    const inp = $('#fl-estacion', el);
+    if (b.dataset.marca === 'Otra') { if (['ypf', 'shell', 'puma', 'axion', 'gulf'].includes(norm(inp.value))) inp.value = ''; inp.focus(); } else inp.value = b.dataset.marca;
+    marcarMarca();
+  }));
+  $('#fl-estacion', el).addEventListener('input', marcarMarca); marcarMarca();
   enterFlow(form, ['fl-vol', 'fl-pu', 'fl-costo', 'fl-fecha', 'fl-estacion'], () => flOk('vol') && flOk('pu') && flOk('costo') && parseKm($('#fl-odo').value) > 0);
   form.addEventListener('submit', ev => submitRefuel(ev, el));
   syncRefuelFuel();
@@ -2110,7 +2147,7 @@ function openExpenseModal(existing, ctx = null) {
   const head = ctx ? ctx.alert : null, link = rec ? null : head, last = ctx ? ctx.last : null;
   const per = existing ? (isYM(existing.periodo) ? existing.periodo : datePart(existing.fecha).slice(0, 7)) : ctx && ctx.periodo;
   const cubre0 = existing ? intIn(existing.cubre, 1, 12, 1) : 1, clase0 = existing && existing.clase === 'ajuste' ? 'ajuste' : 'cuota';
-  const tipos = [...new Set(state.expenses.map(e => e.tipo).filter(Boolean))].sort();
+  const tipos = [...new Set([...CONCEPTOS.map(c => c.label), ...SERVICE_ITEMS.map(a => a.label), ...state.expenses.map(e => e.tipo).filter(Boolean)])].sort();
   const el = openModal({ title: existing ? 'Editar gasto' : head ? `Registrar · ${head.label}` : 'Nuevo gasto', focus: '#gx-monto', body: `
     <form id="gx-form" class="sheet-body" novalidate autocomplete="off">
       ${head ? `<p class="gx-last" id="gx-last">${last ? `Pago anterior: <b class="num">${money(last.monto)}</b> el ${esc(fmtDate(last.fecha))}${last.local ? ` · ${esc(last.local)}` : ''}. Lo precargamos; cambialo si este es distinto.` : 'No hay pagos anteriores registrados para este ítem.'}</p>` : ''}
@@ -2126,7 +2163,7 @@ function openExpenseModal(existing, ctx = null) {
         <p class="help" style="margin:0">Un pago de dos cuotas juntas cubre 2 períodos. Un ajuste (diferencia de póliza, recargo) suma al gasto pero no paga un período.</p>
       </details>` : ''}
       <div class="field"><label for="gx-cat">Categoría</label><select id="gx-cat">${CAT_KEYS.map(k => `<option value="${k}" ${(it.categoria || 'PREVENTIVO') === k ? 'selected' : ''}>${esc(CATS[k].label)}</option>`).join('')}</select></div>
-      <div class="field"><label for="gx-tipo">Tipo</label><input id="gx-tipo" list="gx-tipos" maxlength="60" enterkeyhint="done" placeholder="Cambio de aceite, Lavadero, VTV…" value="${esc(it.tipo || '')}"><datalist id="gx-tipos">${tipos.map(t => `<option value="${esc(t)}">`).join('')}</datalist></div>
+      <div class="field"><label for="gx-tipo">Tipo</label><input id="gx-tipo" list="gx-tipos" maxlength="60" enterkeyhint="done" placeholder="Cambio de aceite, Lavadero, VTV…" value="${esc(it.tipo || '')}"><datalist id="gx-tipos">${tipos.map(t => `<option value="${esc(t)}">`).join('')}</datalist><div class="chips" id="gx-sug" hidden aria-label="Sugerencias" style="margin:8px 0 0"></div></div>
       <div class="grid-2">
         <div class="field"><label for="gx-fecha">Fecha</label><input id="gx-fecha" type="date" value="${esc(datePart(it.fecha) || todayISO())}" required></div>
         <div class="field"><label for="gx-odo">Odómetro (opcional)</label><input id="gx-odo" class="num" inputmode="numeric" value="${Number.isFinite(it.odometro) ? it.odometro : ''}"></div>
@@ -2154,7 +2191,20 @@ function openExpenseModal(existing, ctx = null) {
       const cb = $('#gx-r-' + i, el); if (!m) cb.checked = false; else if (check) cb.checked = true; });
     $('#gx-r-none', el).hidden = any || !tipo.trim();
   };
-  $('#gx-tipo', el).addEventListener('input', () => syncResets(true)); syncResets(!existing);
+  // Sugerencias: chips con lo que encaja con lo escrito; tocar uno completa el Tipo y la categoría. Si no tocaste la categoría
+  // a mano, se ajusta sola a la de la primera sugerencia (un lavadero ya no queda como «Mantenimiento preventivo»).
+  let catManual = !!existing;
+  $('#gx-cat', el).addEventListener('change', () => { catManual = true; });
+  const aplicarSug = s => { $('#gx-tipo', el).value = s.label; $('#gx-cat', el).value = s.cat; catManual = true; toggleResets(); syncResets(true); showSug(); };
+  const showSug = () => {
+    const box = $('#gx-sug', el), sugs = sugerirTipo($('#gx-tipo', el).value).filter(x => norm(x.label) !== norm($('#gx-tipo', el).value));
+    box.hidden = !sugs.length; box.replaceChildren(...sugs.map(x => { const b = document.createElement('button'); b.type = 'button'; b.className = 'chip'; b.textContent = x.label; b.addEventListener('click', () => aplicarSug(x)); return b; }));
+  };
+  $('#gx-tipo', el).addEventListener('input', () => {
+    if (!catManual) { const s = sugerirTipo($('#gx-tipo', el).value)[0]; if (s) { $('#gx-cat', el).value = s.cat; toggleResets(); } }
+    syncResets(true); showSug();
+  });
+  syncResets(!existing); showSug();
   // Pago recurrente: variación % respecto de la cuota anterior y aviso si el período ya está pagado (antes de guardar).
   let dupOk = false;
   const submitBtn = $('button[type=submit]', el), submitTxt = submitBtn.textContent;
@@ -2235,17 +2285,15 @@ function payFieldsHTML(it, existing, idp) {
   const list = cuentasList(), cur = existing ? (it.cuenta || NO_ACCOUNT) : (list.includes(lastCuenta()) ? lastCuenta() : list.length === 1 ? list[0] : '');
   if (cur && cur !== NO_ACCOUNT && !list.includes(cur)) list.push(cur);   // una cuenta ya guardada que se sacó de la lista
   const opt = (v, t) => `<option value="${esc(v)}" ${v === cur ? 'selected' : ''}>${esc(t)}</option>`;
-  return `<div class="grid-2">
+  return `<div class="grid-1">
     <div class="field"><label for="${idp}-cuenta">Cuenta / medio de pago</label><select id="${idp}-cuenta">${opt('', 'Elegí la cuenta…')}${list.map(c => opt(c, c)).join('')}${opt(NO_ACCOUNT, 'Sin cuenta (no va a Finanzas)')}</select></div>
-    <div class="field"><label for="${idp}-cuotas">Cuotas</label><input id="${idp}-cuotas" class="num" inputmode="numeric" value="${Number.isInteger(it.cuotas) ? it.cuotas : 1}"></div>
   </div>${list.length ? '' : '<p class="help" style="margin:-4px 0 0">Cargá tus cuentas de Finanzas en Configurar para elegirlas acá.</p>'}`;
 }
 // Devuelve { cuenta, cuotas } o { error }.
 function readPayFields(el, idp) {
-  const v = $(`#${idp}-cuenta`, el).value, cuotas = Number($(`#${idp}-cuotas`, el).value);
+  const v = $(`#${idp}-cuenta`, el).value;
   if (!v) return { error: 'Elegí con qué cuenta pagaste (o “Sin cuenta”).' };
-  if (!Number.isInteger(cuotas) || cuotas < 1 || cuotas > 72) return { error: 'Las cuotas tienen que ser un entero entre 1 y 72.' };
-  return { cuenta: v === NO_ACCOUNT ? null : v, cuotas };
+  return { cuenta: v === NO_ACCOUNT ? null : v, cuotas: 1 };   // las cuotas las trae el resumen de la tarjeta en Finanzas
 }
 
 function openSettingsModal() {
@@ -2672,7 +2720,7 @@ async function boot() {
 
   if (DEMO) {
     store = createMemoryStore();
-    window.__garage = { state, store, fzPull, fzEntrante, derive, ipcFactor, cifrarSobre, b64u, deb64u, fzEvent, fzId, fzQueue, fzCambio, flushOutbox, leerCodigoFG, fzStatus, buildDrivvoPlan, buildJsonPlan, computeAlerts, serviceCounters,
+    window.__garage = { state, store, sugerirTipo, fzPull, fzEntrante, derive, ipcFactor, cifrarSobre, b64u, deb64u, fzEvent, fzId, fzQueue, fzCambio, flushOutbox, leerCodigoFG, fzStatus, buildDrivvoPlan, buildJsonPlan, computeAlerts, serviceCounters,
       parseCSV, finishPlan, executePlan, showPlanPreview, migrateSettings, SERVICE_ITEMS, DATE_ALERTS, GROUPS, openOnboarding, markReviewed, kmRef, openAlertExpense, lastExpenseFor,
       REC_TIPOS, recurrentesList, recPayments, recCuotas, recStatus, recHistory, migrateSeguro, openRecurrenteModal, openRecPayment, openRecHistory };   // solo para pruebas locales (tests/smoke.mjs)
     enterApp({ uid: 'demo', email: 'demo@local' });
