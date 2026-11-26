@@ -89,6 +89,16 @@ En la carga de combustible el combustible viene preseleccionado con el de la úl
 
 Pie de página → **Exportar Copia de Seguridad (JSON)** descarga `autolog-backup-AAAA-MM-DD.json`. **Importar Datos** acepta ese JSON (con vista previa) o el CSV de Drivvo.
 
+## Respaldo automático de Firestore
+
+Una vez por día (12:45) la Mac baja todo `users/**` a `respaldos/garage-AAAA-MM-DD-HHMM.json` (solo lectura, 30 copias, carpeta fuera de git). Pasos, una sola vez:
+
+1. En la consola de Google Cloud del proyecto, creá una cuenta de servicio con el rol **Cloud Datastore Viewer** (solo lectura) y bajá su clave JSON.
+2. Guardala en el Llavero: `security add-generic-password -U -s garage-firestore -a "$USER" -w "$(cat RUTA_DEL_JSON)"`
+3. **Borrá el archivo descargado.**
+4. Corré una vez a mano `node respaldo-firestore.mjs` y mirá que imprima los conteos.
+5. Activá el agente: `sh instalar-respaldo-automatico.sh` (registro en `~/Library/Logs/garage-respaldo.log`; avisa si falla 3 veces seguidas).
+
 ## Probar sin Firebase
 
 Abrí la app en `localhost` o como archivo con `?demo=1` (por ejemplo `http://localhost:8000/index.html?demo=1`). Usa un almacén en memoria y no se activa en dominios de producción. Los datos se pierden al recargar.

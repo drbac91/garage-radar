@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.drbac91.garage-respaldo</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>__AQUI__/respaldo-automatico.sh</string>
+  </array>
+  <!-- 12:45 todos los días; si la Mac dormía, launchd lo corre al despertar -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>12</integer>
+    <key>Minute</key>
+    <integer>45</integer>
+  </dict>
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>

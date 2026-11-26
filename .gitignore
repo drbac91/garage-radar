@@ -10,3 +10,5 @@ autolog-backup-*.json
 !tests/fixtures/backup-mini.json
 # Dependencias de desarrollo
 node_modules/
+# Respaldos automáticos de Firestore (datos personales)
+respaldos/
